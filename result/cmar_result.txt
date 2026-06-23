@@ -1,6 +1,6 @@
 ==========================================================
-       CMAR â€” PHAN LOP DUA TREN NHIEU LUAT KET HOP
-  (Li, Han, Pei â€” ICDM 2001)
+       CMAR — PHAN LOP DUA TREN NHIEU LUAT KET HOP
+  (Li, Han, Pei — ICDM 2001)
 ==========================================================
 
 Dataset:              data/car.csv
@@ -21,7 +21,7 @@ Phase 1: RULE GENERATION (Section 3.1)
    condset = cac item khong phai class, consequent = class.
    Giu luat co confidence >= 0.5.
 
-Phase 2: PRUNING (Section 3.3) â€” 3 phuong phap:
+Phase 2: PRUNING (Section 3.3) — 3 phuong phap:
 
    Pruning 1: General Rule Pruning
      Sap xep theo: confidence giam -> support giam -> condset ngan.
@@ -42,7 +42,7 @@ Phase 3: CLASSIFICATION (Section 4)
    - Thu thap tat ca luat match (condset c= record items).
    - Nhom luat theo class.
    - Tinh score(class) = Sum chi^2(r) / max_chi^2(r)
-     (weighted chi-square â€” Section 4 of paper)
+     (weighted chi-square — Section 4 of paper)
    - Class co score cao nhat thang.
    - Khong co luat match -> dung default class.
 
@@ -60,25 +60,25 @@ Total rules removed:              163
 CAC LUAT SAU PRUNING (19 luat)
 ----------------------------------------------------------
 
-1. [safety=low] => unacc [sup=0,3365, conf=1,0000]
-2. [persons=2] => unacc [sup=0,3336, conf=1,0000]
-3. [buying=vhigh, maint=high] => unacc [sup=0,0622, conf=1,0000]
-4. [maint=vhigh, buying=high] => unacc [sup=0,0615, conf=1,0000]
-5. [maint=vhigh, buying=vhigh] => unacc [sup=0,0586, conf=1,0000]
-6. [lug_boot=small, maint=vhigh] => unacc [sup=0,0716, conf=0,9000]
-7. [doors=2, buying=vhigh] => unacc [sup=0,0528, conf=0,8795]
-8. [lug_boot=small, buying=vhigh] => unacc [sup=0,0709, conf=0,8750]
-9. [doors=2, maint=vhigh] => unacc [sup=0,0478, conf=0,8684]
-10. [lug_boot=small, buying=high] => unacc [sup=0,0702, conf=0,8584]
-11. [doors=2, lug_boot=small] => unacc [sup=0,0731, conf=0,8487]
-12. [maint=vhigh] => unacc [sup=0,2041, conf=0,8343]
-13. [buying=vhigh] => unacc [sup=0,2062, conf=0,8213]
-14. [doors=2, buying=high] => unacc [sup=0,0528, conf=0,8111]
-15. [safety=med, lug_boot=small] => unacc [sup=0,0876, conf=0,7961]
-16. [lug_boot=small, maint=high] => unacc [sup=0,0673, conf=0,7949]
-17. [lug_boot=small] => unacc [sup=0,2547, conf=0,7719]
-18. [buying=high] => unacc [sup=0,1889, conf=0,7565]
-19. [safety=high, persons=4] => acc [sup=0,0637, conf=0,5714]
+1. [safety=low] => unacc [sup=0.3365, conf=1.0000]
+2. [persons=2] => unacc [sup=0.3336, conf=1.0000]
+3. [buying=vhigh, maint=high] => unacc [sup=0.0622, conf=1.0000]
+4. [maint=vhigh, buying=high] => unacc [sup=0.0615, conf=1.0000]
+5. [maint=vhigh, buying=vhigh] => unacc [sup=0.0586, conf=1.0000]
+6. [lug_boot=small, maint=vhigh] => unacc [sup=0.0716, conf=0.9000]
+7. [doors=2, buying=vhigh] => unacc [sup=0.0528, conf=0.8795]
+8. [lug_boot=small, buying=vhigh] => unacc [sup=0.0709, conf=0.8750]
+9. [doors=2, maint=vhigh] => unacc [sup=0.0478, conf=0.8684]
+10. [lug_boot=small, buying=high] => unacc [sup=0.0702, conf=0.8584]
+11. [doors=2, lug_boot=small] => unacc [sup=0.0731, conf=0.8487]
+12. [maint=vhigh] => unacc [sup=0.2041, conf=0.8343]
+13. [buying=vhigh] => unacc [sup=0.2062, conf=0.8213]
+14. [doors=2, buying=high] => unacc [sup=0.0528, conf=0.8111]
+15. [safety=med, lug_boot=small] => unacc [sup=0.0876, conf=0.7961]
+16. [lug_boot=small, maint=high] => unacc [sup=0.0673, conf=0.7949]
+17. [lug_boot=small] => unacc [sup=0.2547, conf=0.7719]
+18. [buying=high] => unacc [sup=0.1889, conf=0.7565]
+19. [safety=high, persons=4] => acc [sup=0.0637, conf=0.5714]
 
 ----------------------------------------------------------
 DU DOAN TUNG BAN GHI TEST (346 records)
@@ -438,14 +438,14 @@ DU DOAN TUNG BAN GHI TEST (346 records)
 DANH GIA HIEU SUAT
 ----------------------------------------------------------
 
-Accuracy: 260/346 = 0,7514 (75,14%)
+Accuracy: 260/346 = 0.7514 (75.14%)
 
 Class          TP   FP   FN  Precision     Recall         F1
 --------------------------------------------------------
-acc            20   11   55     0,6452     0,2667     0,3774
-unacc         240   75    0     0,7619     1,0000     0,8649
-good            0    0   16     0,0000     0,0000     0,0000
-vgood           0    0   15     0,0000     0,0000     0,0000
+acc            20   11   55     0.6452     0.2667     0.3774
+unacc         240   75    0     0.7619     1.0000     0.8649
+good            0    0   16     0.0000     0.0000     0.0000
+vgood           0    0   15     0.0000     0.0000     0.0000
 --------------------------------------------------------
-Macro-F1: 0,3106
-Weighted-F1: 0,6817
+Macro-F1: 0.3106
+Weighted-F1: 0.6817

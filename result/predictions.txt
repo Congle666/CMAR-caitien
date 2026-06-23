@@ -348,4 +348,4 @@ Record                                             Actual       Predicted
 [buying=low, maint=low, doors=3, persons=more, lug_boot=small, safety=low] unacc        unacc        
 [buying=med, maint=med, doors=5more, persons=4, lug_boot=big, safety=high] vgood        acc          <-- WRONG
 ----------------------------------------------------------------------------
-Accuracy: 260/346 = 75,14%
+Accuracy: 260/346 = 75.14%

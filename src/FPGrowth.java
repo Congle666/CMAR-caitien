@@ -27,23 +27,64 @@ public class FPGrowth {
     private final int minSupport;
     private int maxPatternLength = Integer.MAX_VALUE;
 
+    // --- MCWCAR (Wu et al. 2024 EAAI): CCO weighted-support ---
     /**
-     * Ngưỡng minSup theo từng lớp (Hướng 2). Khi có, bước sinh luật dùng
-     * {@code classMinSupMap.getOrDefault(cls, minSupport)} thay cho
-     * minSupport toàn cục. Null = hành vi baseline.
+     * Bật weighted-support dựa trên correlation coefficient (CCO / φ-coefficient).
+     * Mỗi item nhận trọng số w(i) = max_c |CCO(i, c)| ∈ [0,1]. Item tương quan
+     * mạnh với MỘT lớp (kể cả minority count thấp) được "nâng" support → sống sót
+     * qua ngưỡng minSupport. Mặc định TẮT để giữ baseline CMAR gốc.
+     *
+     * <p>CCO(i,c) = [P(i,c) − P(i)P(c)] / √[P(i)P(c)(1−P(i))(1−P(c))]  — Eq.(3).</p>
      */
-    private Map<String, Integer> classMinSupMap;
+    private boolean useCcoWeighting = false;
+    /** Trọng số item, tính 1 lần đầu mine(). w ∈ [0,1]. */
+    private Map<String, Double> itemWeight = new HashMap<>();
 
     /**
-     * Ngưỡng minConfidence theo từng lớp (Hướng 3 — Adaptive minConf).
-     * Khi có, bước sinh luật dùng {@code classMinConfMap.getOrDefault(cls, minConfidence)}
-     * thay cho minConfidence toàn cục. Null = hành vi baseline.
-     *
-     * <p>Mục đích: class thiểu số có confidence tối đa bị giới hạn bởi
-     * (freq(c) / itemSup) nên ngưỡng 0.5 toàn cục là quá chặt. Adaptive
-     * minConf nới lỏng cho class hiếm, giữ nguyên cho class đa số.</p>
+     * Chế độ tính trọng số item (MCWCAR Wu et al. 2024):
+     * <ul>
+     *   <li><b>CCO</b> — φ-coefficient Eq.(3): chỉ tương quan TUYẾN TÍNH item↔class.</li>
+     *   <li><b>MI</b>  — Mutual Information Eq.(4): bắt cả tuyến tính LẪN phi tuyến.</li>
+     *   <li><b>HYBRID</b> — max(|CCO|, MI): lấy tín hiệu mạnh nhất từ cả hai (đúng
+     *       tinh thần paper dùng MI cho feature + CCO cho class).</li>
+     * </ul>
      */
-    private Map<String, Double> classMinConfMap;
+    public enum WeightMode { CCO, MI, HYBRID }
+    private WeightMode weightMode = WeightMode.CCO;
+
+    /** Bật/tắt weighted-support (MCWCAR). Mặc định false = CMAR gốc. */
+    public void setUseCcoWeighting(boolean use) { this.useCcoWeighting = use; }
+    /** Chọn chế độ trọng số: CCO (mặc định) / MI / HYBRID. */
+    public void setWeightMode(WeightMode mode)  { this.weightMode = mode; }
+
+    /**
+     * Per-class minimum support (MSApriori-lite — Liu, Hsu, Ma 1999 KDD).
+     * Map class → ngưỡng support riêng. Null = dùng minSupport global (hành vi cũ).
+     * Class hiếm → ngưỡng thấp → CAR cho class hiếm sống sót qua cắt tỉa.
+     */
+    private Map<String, Integer> minSupByClass = null;
+    /** Set per-class minSup. Null = tắt (global minSupport). */
+    public void setMinSupByClass(Map<String, Integer> m) { this.minSupByClass = m; }
+
+    /**
+     * Tính minSup per-class theo heuristic log-based (Liu 1999 + class-specific threshold).
+     * weight_c = log(|c|+1)/log(N+1) ∈ (0,1]; minSup_c = clamp(global×weight_c, FLOOR, global).
+     * Lớp đông → ~global (giữ tight); lớp hiếm → FLOOR (cứu rule). FLOOR≥2 chống overfit 1 mẫu.
+     */
+    public static Map<String, Integer> computeMinSupByClass(
+            Map<String, Integer> classCount, int globalMinSup) {
+        int N = classCount.values().stream().mapToInt(Integer::intValue).sum();
+        Map<String, Integer> out = new HashMap<>();
+        double lnN = Math.log(N + 1);
+        for (Map.Entry<String, Integer> e : classCount.entrySet()) {
+            double w = (lnN > 0) ? Math.log(e.getValue() + 1) / lnN : 1.0;  // ∈(0,1]
+            int raw = (int) Math.round(globalMinSup * w);
+            int floor = Math.max(2, (int) Math.ceil(0.5 * e.getValue()));
+            floor = Math.min(floor, globalMinSup);                 // floor không vượt global
+            out.put(e.getKey(), Math.max(floor, Math.min(raw, globalMinSup)));
+        }
+        return out;
+    }
 
     private final List<FrequentPattern> patterns = new ArrayList<>();
     private final List<AssociationRule> rules    = new ArrayList<>();
@@ -53,9 +94,6 @@ public class FPGrowth {
     // Cache trong mine() để mineTree() không phải nhận tham số dài dòng.
     private double minConfidence;
     private int    totalTransactions;
-    
-    // Hướng 2: lưu classMinSupMap để áp dụng xuyên suốt mining (không chỉ sinh luật)
-    private Map<String, Integer> cachedClassMinSupMap;
 
     public FPGrowth(int minSupport) {
         this.minSupport = minSupport;
@@ -64,42 +102,6 @@ public class FPGrowth {
     /** Đặt độ dài tối đa của pattern, giới hạn bộ nhớ trên dữ liệu nhiều chiều. */
     public void setMaxPatternLength(int maxLen) {
         this.maxPatternLength = maxLen;
-    }
-
-    /**
-     * Đặt ngưỡng minSup theo từng lớp. Khi có, việc sinh luật sẽ kiểm tra
-     * {@code classSup >= classMinSupMap.getOrDefault(cls, minSupport)}
-     * thay cho minSupport toàn cục. Cho phép sinh luật cho các lớp thiểu số
-     * mà support tuyệt đối không thể đạt ngưỡng toàn cục.
-     *
-     * <p>Truyền null (mặc định) để dùng ngưỡng toàn cục (hành vi baseline).</p>
-     */
-    public void setClassMinSupMap(Map<String, Integer> classMinSupMap) {
-        this.classMinSupMap = classMinSupMap;
-    }
-
-    /** Trả về ngưỡng dùng để sinh luật cho lớp c (fallback về giá trị toàn cục). */
-    private int classThreshold(String cls) {
-        if (classMinSupMap == null) return minSupport;
-        return classMinSupMap.getOrDefault(cls, minSupport);
-    }
-
-    /**
-     * Đặt ngưỡng minConfidence theo từng lớp (Hướng 3). Khi có, bước sinh luật
-     * kiểm tra {@code conf >= classMinConfMap.getOrDefault(cls, minConfidence)}.
-     * Cho phép class thiểu số có ngưỡng confidence thấp hơn (vì confidence tối
-     * đa của rule cho class hiếm bị giới hạn bởi tỉ lệ freq(c)/sup(P)).
-     *
-     * <p>Truyền null (mặc định) = dùng ngưỡng toàn cục (baseline).</p>
-     */
-    public void setClassMinConfMap(Map<String, Double> classMinConfMap) {
-        this.classMinConfMap = classMinConfMap;
-    }
-
-    /** Trả về minConfidence cho lớp c (fallback về giá trị toàn cục). */
-    private double classMinConfidence(String cls) {
-        if (classMinConfMap == null) return minConfidence;
-        return classMinConfMap.getOrDefault(cls, minConfidence);
     }
 
     /** CR-tree ban đầu được xây trong lần mine() gần nhất. */
@@ -116,11 +118,6 @@ public class FPGrowth {
     public List<AssociationRule> getRules() {
         return rules;
     }
-    
-    /** classMinSupMap được sử dụng trong lần mine() gần nhất (dùng cho báo cáo Hướng 2). */
-    public Map<String, Integer> getCachedClassMinSupMap() {
-        return cachedClassMinSupMap;
-    }
 
     /**
      * Khai thác Class Association Rule từ các transaction huấn luyện.
@@ -135,8 +132,6 @@ public class FPGrowth {
         rules.clear();
         this.minConfidence     = minConfidence;
         this.totalTransactions = trainData.size();
-        // Giữ cachedClassMinSupMap từ lần setClassMinSupMap() gần nhất
-        // (nếu chưa set thì là null — dùng minSupport toàn cục)
 
         // --- Bước 1: tần suất item toàn cục (chỉ thuộc tính, không tính class) ---
         Map<String, Integer> freq = new HashMap<>();
@@ -145,7 +140,20 @@ public class FPGrowth {
                 freq.merge(item, 1, Integer::sum);
             }
         }
-        freq.entrySet().removeIf(e -> e.getValue() < minSupport);
+        // --- MCWCAR: tính trọng số CCO cho mỗi item TRƯỚC khi cắt theo minSupport ---
+        // (phải tính trên TẤT cả item, vì weighted-support có thể cứu item count thấp)
+        if (useCcoWeighting) {
+            computeCcoWeights(trainData, freq);
+            // Weighted-support: effectiveWeight = 1 + |CCO| ∈ [1,2] (WARM, Wang 2000).
+            // Item tương quan mạnh được BOOST support tới 2× → sống sót dù count thấp.
+            // Item vô dụng (w≈0) giữ nguyên → weighted-support CHỈ nới lỏng, không siết.
+            freq.entrySet().removeIf(e -> {
+                double w = itemWeight.getOrDefault(e.getKey(), 0.0);
+                return e.getValue() * (1.0 + w) < minSupport;
+            });
+        } else {
+            freq.entrySet().removeIf(e -> e.getValue() < minSupport);
+        }
         if (freq.isEmpty()) {
             this.initialTree = new FPTree(minSupport);
             return rules;
@@ -206,15 +214,22 @@ public class FPGrowth {
             }
 
             // --- Sinh một CAR cho mỗi lớp đạt ngưỡng và đạt minConfidence ---
-            // Hướng 2: dùng ngưỡng minSup theo từng lớp nếu classMinSupMap đã được đặt.
-            // Hướng 3: dùng ngưỡng minConf theo từng lớp nếu classMinConfMap đã được đặt.
             for (Map.Entry<String, Integer> e : classDistForP.entrySet()) {
                 String cls       = e.getKey();
                 int    classSup  = e.getValue();
-                if (classSup < classThreshold(cls)) continue;
+                // Ngưỡng support cho class này: per-class (MSApriori-lite) nếu bật, else global.
+                int thr = (minSupByClass != null)
+                        ? minSupByClass.getOrDefault(cls, minSupport)
+                        : minSupport;
+                // MCWCAR weighted-support: BOOST (1 + avg|CCO|) ∈ [1,2] → cứu rule
+                // có pattern tương quan mạnh với lớp (kể cả minority count thấp).
+                double effSup = useCcoWeighting
+                        ? classSup * (1.0 + patternWeight(patternSet))
+                        : classSup;
+                if (effSup < thr) continue;
 
                 double confidence = (double) classSup / itemSupport;
-                if (confidence < classMinConfidence(cls)) continue;
+                if (confidence < minConfidence) continue;
 
                 double support = (double) classSup / totalTransactions;
 
@@ -258,17 +273,7 @@ public class FPGrowth {
                     condFreq.merge(condItem, cnt, Integer::sum);
                 }
             }
-            
-            // --- Hướng 2: Nếu có classMinSupMap → áp dụng class-specific minSup cho filtering ---
-            // Thay vì dùng global minSupport, tính min của class-specific ngưỡng
-            final int effectiveMinSup = (cachedClassMinSupMap != null && !cachedClassMinSupMap.isEmpty())
-                ? cachedClassMinSupMap.values().stream()
-                    .mapToInt(Integer::intValue)
-                    .min()
-                    .orElse(minSupport)
-                : minSupport;
-            
-            condFreq.entrySet().removeIf(e -> e.getValue() < effectiveMinSup);
+            condFreq.entrySet().removeIf(e -> e.getValue() < minSupport);
             if (condFreq.isEmpty()) continue;
 
             // --- Xây CR-tree điều kiện, lan truyền phân phối lớp ---
@@ -295,5 +300,122 @@ public class FPGrowth {
             // --- Đệ quy với prefix đã mở rộng ---
             mineTree(condTree, newPattern);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // MCWCAR — Item weighting: CCO (φ-coefficient) + MI (Mutual Information)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Tính trọng số item theo {@link #weightMode} (Wu et al. 2024 EAAI):
+     * <ul>
+     *   <li>CCO Eq.(3): w = max_c |φ(i,c)| — tương quan tuyến tính.</li>
+     *   <li>MI  Eq.(4): w = MI(i;C) normalized — tuyến tính + phi tuyến.</li>
+     *   <li>HYBRID: w = max(|CCO|, MI).</li>
+     * </ul>
+     * Tất cả ∈ [0,1].
+     */
+    private void computeCcoWeights(List<Transaction> trainData, Map<String, Integer> itemFreq) {
+        itemWeight.clear();
+        int n = trainData.size();
+        if (n == 0) return;
+
+        // Tần suất lớp + đồng xuất hiện (item, class)
+        Map<String, Integer> classFreq = new HashMap<>();
+        Map<String, Map<String, Integer>> jointFreq = new HashMap<>();  // item -> class -> count
+        for (Transaction t : trainData) {
+            String c = t.getClassLabel();
+            classFreq.merge(c, 1, Integer::sum);
+            for (String item : t.getItems()) {
+                if (!itemFreq.containsKey(item)) continue;
+                jointFreq.computeIfAbsent(item, k -> new HashMap<>()).merge(c, 1, Integer::sum);
+            }
+        }
+
+        for (Map.Entry<String, Integer> ie : itemFreq.entrySet()) {
+            String item = ie.getKey();
+            int itemCount = ie.getValue();
+            double pi = (double) itemCount / n;              // P(i)
+            if (pi <= 0.0 || pi >= 1.0) { itemWeight.put(item, 0.0); continue; }
+
+            Map<String, Integer> joints = jointFreq.getOrDefault(item, java.util.Collections.emptyMap());
+
+            double cco = (weightMode == WeightMode.CCO || weightMode == WeightMode.HYBRID)
+                ? maxAbsCco(pi, joints, classFreq, n) : 0.0;
+            double mi  = (weightMode == WeightMode.MI  || weightMode == WeightMode.HYBRID)
+                ? mutualInfo(itemCount, joints, classFreq, n) : 0.0;
+
+            double w;
+            switch (weightMode) {
+                case MI:     w = mi; break;
+                case HYBRID: w = Math.max(cco, mi); break;
+                case CCO:
+                default:     w = cco; break;
+            }
+            itemWeight.put(item, w);
+        }
+    }
+
+    /** Trọng số CCO = max_c |φ-coefficient(i,c)| ∈ [0,1] (Eq.3). */
+    private double maxAbsCco(double pi, Map<String, Integer> joints,
+                             Map<String, Integer> classFreq, int n) {
+        double maxAbs = 0.0;
+        for (Map.Entry<String, Integer> ce : classFreq.entrySet()) {
+            double pc = (double) ce.getValue() / n;          // P(c)
+            if (pc <= 0.0 || pc >= 1.0) continue;
+            double pic = (double) joints.getOrDefault(ce.getKey(), 0) / n;  // P(i,c)
+            double denom = Math.sqrt(pi * pc * (1 - pi) * (1 - pc));
+            if (denom <= 0.0) continue;
+            maxAbs = Math.max(maxAbs, Math.abs((pic - pi * pc) / denom));
+        }
+        return maxAbs;
+    }
+
+    /**
+     * Mutual Information MI(i; C) cho item nhị phân (có/vắng) vs class (Eq.4),
+     * chuẩn hoá về [0,1] bằng cách chia entropy lớp H(C) (= normalized MI / uncertainty
+     * coefficient). Bắt được cả tương quan tuyến tính LẪN phi tuyến giữa item và class.
+     *
+     * <p>MI(i;C) = Σ_{x∈{present,absent}} Σ_c P(x,c)·log2[ P(x,c) / (P(x)·P(c)) ]</p>
+     */
+    private double mutualInfo(int itemCount, Map<String, Integer> joints,
+                              Map<String, Integer> classFreq, int n) {
+        double pPresent = (double) itemCount / n;
+        double pAbsent  = 1.0 - pPresent;
+        double mi = 0.0, hC = 0.0;
+
+        for (Map.Entry<String, Integer> ce : classFreq.entrySet()) {
+            int classCount = ce.getValue();
+            double pc = (double) classCount / n;
+            if (pc <= 0.0) continue;
+            hC -= pc * log2(pc);   // entropy lớp
+
+            int jPresent = joints.getOrDefault(ce.getKey(), 0);
+            int jAbsent  = classCount - jPresent;
+
+            // ô (item present, class c)
+            if (jPresent > 0 && pPresent > 0) {
+                double pxc = (double) jPresent / n;
+                mi += pxc * log2(pxc / (pPresent * pc));
+            }
+            // ô (item absent, class c)
+            if (jAbsent > 0 && pAbsent > 0) {
+                double pxc = (double) jAbsent / n;
+                mi += pxc * log2(pxc / (pAbsent * pc));
+            }
+        }
+        if (hC <= 0.0) return 0.0;
+        double norm = mi / hC;                 // ∈ [0,1] (uncertainty coefficient)
+        return norm < 0 ? 0.0 : (norm > 1 ? 1.0 : norm);
+    }
+
+    private static double log2(double x) { return Math.log(x) / Math.log(2.0); }
+
+    /** Trọng số pattern = trung bình trọng số item (Wu et al. 2024, weighted support). */
+    private double patternWeight(java.util.Collection<String> pattern) {
+        if (pattern.isEmpty()) return 0.0;
+        double sum = 0.0;
+        for (String item : pattern) sum += itemWeight.getOrDefault(item, 0.0);
+        return sum / pattern.size();
     }
 }

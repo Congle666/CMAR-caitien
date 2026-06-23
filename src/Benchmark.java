@@ -21,30 +21,29 @@ public class Benchmark {
 
     // Kết quả từ paper để so sánh (Table 1, ICDM 2001)
     // minSupportPct được tinh chỉnh từng dataset để mining khả thi.
-    static final String[][] DATASETS = {
+    public static final String[][] DATASETS = {
         // { file, name, minSupportPct, paperCMAR, paperCBA, paperC45, [maxPatternLength] }
         // Cột thứ 7 (tuỳ chọn): giới hạn độ dài pattern để tránh bùng nổ
         // trên dataset nhiều chiều (zoo có 16 thuộc tính nhị phân → ~2^16 ứng viên)
-        { "data/breast-w.csv",       "breast-w",    "0.02", "96.42", "96.28", "95.00" },
-        { "data/cleve.csv",          "cleve",       "0.02", "82.18", "82.83", "78.24" },
-        { "data/crx.csv",            "crx",         "0.04", "85.36", "84.93", "84.94" },
-        { "data/diabetes.csv",       "diabetes",    "0.03", "75.81", "74.47", "74.18" },
-        { "data/german_disc.csv",    "german",      "0.06", "73.40", "73.40", "72.30" },
-        { "data/glass.csv",          "glass",       "0.01", "70.09", "67.76", "68.22" },
-        { "data/heart.csv",          "heart",       "0.03", "82.59", "81.85", "80.74" },
-        { "data/hepatitis.csv",      "hepatitis",   "0.05", "80.65", "81.29", "80.00" },
-        { "data/horse.csv",          "horse",       "0.03", "82.61", "82.07", "82.61" },
-        { "data/iris_disc.csv",      "iris",        "0.03", "94.00", "94.67", "95.33" },
-        { "data/labor.csv",          "labor",       "0.05", "89.47", "86.33", "79.33" },
-        { "data/led7.csv",           "led7",        "0.03", "71.90", "71.70", "73.50" },
-        { "data/lymph.csv",          "lymph",       "0.05", "82.43", "77.03", "73.51" },
-        { "data/mushroom_full.csv",  "mushroom",    "0.15", "100.00","100.00","100.00" },
-        { "data/sonar.csv",          "sonar",       "0.05", "79.33", "76.92", "73.56", "5" },
-        { "data/tic-tac-toe.csv",    "tic-tac-toe", "0.003","99.27", "99.06", "99.37" },
-        { "data/vehicle.csv",        "vehicle",     "0.03", "68.68", "67.73", "72.34", "5" },
-        { "data/waveform.csv",       "waveform",    "0.01", "80.17", "79.93", "78.10", "5" },
-        { "data/wine.csv",           "wine",        "0.03", "95.51", "95.51", "92.70" },
-        { "data/zoo_h.csv",          "zoo",         "0.03", "96.04", "97.03", "93.07", "4" },
+        { "data_clean/breast-w.csv",    "breast-w",    "0.02", "96.42", "96.28", "95.00" },
+        { "data_clean/cleve.csv",       "cleve",       "0.02", "82.18", "82.83", "78.24" },
+        { "data_clean/crx.csv",         "crx",         "0.04", "85.36", "84.93", "84.94" },
+        { "data_clean/diabetes.csv",    "diabetes",    "0.03", "75.81", "74.47", "74.18" },
+        { "data_clean/german.csv",      "german",      "0.06", "73.40", "73.40", "72.30" },
+        { "data_clean/glass.csv",       "glass",       "0.01", "70.09", "67.76", "68.22" },
+        { "data_clean/heart.csv",       "heart",       "0.03", "82.59", "81.85", "80.74" },
+        { "data_clean/hepatitis.csv",   "hepatitis",   "0.05", "80.65", "81.29", "80.00" },
+        { "data_clean/horse.csv",       "horse",       "0.03", "82.61", "82.07", "82.61" },
+        { "data_clean/iris.csv",        "iris",        "0.03", "94.00", "94.67", "95.33" },
+        { "data_clean/labor.csv",       "labor",       "0.05", "89.47", "86.33", "79.33" },
+        { "data_clean/led7.csv",        "led7",        "0.03", "71.90", "71.70", "73.50" },
+        { "data_clean/lymph.csv",       "lymph",       "0.05", "82.43", "77.03", "73.51" },
+        { "data_clean/sonar.csv",       "sonar",       "0.05", "79.33", "76.92", "73.56", "5" },
+        { "data_clean/tic-tac-toe.csv", "tic-tac-toe", "0.003","99.27", "99.06", "99.37" },
+        { "data_clean/vehicle.csv",     "vehicle",     "0.03", "68.68", "67.73", "72.34", "5" },
+        { "data_clean/waveform.csv",    "waveform",    "0.01", "80.17", "79.93", "78.10", "5" },
+        { "data_clean/wine.csv",        "wine",        "0.03", "95.51", "95.51", "92.70" },
+        { "data_clean/zoo.csv",         "zoo",         "0.03", "96.04", "97.03", "93.07", "4" },
     };
 
     static final String OUT_METRICS_CSV   = "result/baseline_metrics.csv";

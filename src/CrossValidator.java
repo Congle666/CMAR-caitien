@@ -1,6 +1,5 @@
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -16,12 +15,7 @@ import java.util.function.Supplier;
  *   <li>Báo cáo accuracy + Macro-F1 + Weighted-F1 + per-class P/R/F1</li>
  * </ul>
  *
- * <p>Hỗ trợ 3 cải tiến cho dữ liệu mất cân bằng:</p>
- * <ul>
- *   <li><b>H2</b> — Class-specific minSup: {@code minSup(c) = supPct × freq(c)}</li>
- *   <li><b>H3</b> — Adaptive minConf: {@code minConf(c) = min(globalMinConf, max(floor, lift × freq(c)/N))}</li>
- *   <li><b>SMOTE</b> — Synthetic Minority Over-sampling (categorical N-variant)</li>
- * </ul>
+ * <p>Hỗ trợ cải tiến cho dữ liệu mất cân bằng (SMOTE / Borderline-SMOTE).</p>
  */
 public class CrossValidator {
 
@@ -38,7 +32,7 @@ public class CrossValidator {
         return accs;
     }
 
-    /** Baseline CMAR (không H2/H3/SMOTE). */
+    /** Baseline CMAR (không SMOTE). */
     public static List<EvalMetrics> runWithMetrics(
             List<Transaction> data, int k,
             double minSupportPct, double minConfidence,
@@ -46,35 +40,32 @@ public class CrossValidator {
             long seed, int maxPatternLength) {
         return runWithMetrics(data, k, minSupportPct, minConfidence,
             chiSqThreshold, coverageDelta, seed, maxPatternLength,
-            CMARClassifier::new, 0.0, 0.0, 0.0, 0.0, false);
+            CMARClassifier::new, 0.0, SmoteVariant.VANILLA);
     }
 
-    /** Backward-compatible 4-param SMOTE overload (defaults to vanilla SMOTE). */
+    /** SMOTE variant — chọn vanilla SMOTE-N, Borderline-SMOTE, hay MWMOTE-N. */
+    public enum SmoteVariant { VANILLA, BORDERLINE, MWMOTE }
+
+    /** Legacy boolean overload — useBorderline=true → BORDERLINE, false → VANILLA. */
     public static List<EvalMetrics> runWithMetrics(
             List<Transaction> data, int k,
             double minSupportPct, double minConfidence,
             double chiSqThreshold, int coverageDelta,
             long seed, int maxPatternLength,
             Supplier<CMARClassifier> classifierFactory,
-            double classMinSupFraction,
-            double adaptiveMinConfFloor,
-            double adaptiveMinConfLift,
-            double smoteTargetRatio) {
+            double smoteTargetRatio,
+            boolean useBorderlineSMOTE) {
         return runWithMetrics(data, k, minSupportPct, minConfidence,
             chiSqThreshold, coverageDelta, seed, maxPatternLength,
-            classifierFactory, classMinSupFraction,
-            adaptiveMinConfFloor, adaptiveMinConfLift, smoteTargetRatio,
-            false);  // useBorderlineSMOTE = false → vanilla SMOTE
+            classifierFactory, smoteTargetRatio,
+            useBorderlineSMOTE ? SmoteVariant.BORDERLINE : SmoteVariant.VANILLA);
     }
 
     /**
      * Overload đầy đủ — bật/tắt từng cải tiến qua tham số.
      *
-     * @param classMinSupFraction    H2 — > 0 để bật class-specific minSup. Điển hình = {@code minSupportPct}.
-     * @param adaptiveMinConfFloor   H3 — > 0 để bật adaptive minConf. Điển hình 0.3.
-     * @param adaptiveMinConfLift    H3 — hệ số khuếch đại baseline freq. Điển hình 5.0.
-     * @param smoteTargetRatio       SMOTE — > 0 để bật. 1.0 = balance hoàn toàn. 0 = tắt.
-     * @param useBorderlineSMOTE     true → dùng Borderline-SMOTE-N (Han 2005) thay vì vanilla SMOTE-N (Chawla 2002).
+     * @param smoteTargetRatio  SMOTE — > 0 để bật. 1.0 = balance hoàn toàn. 0 = tắt.
+     * @param smoteVariant      VANILLA (Chawla 2002), BORDERLINE (Han 2005), MWMOTE (Barua 2014).
      */
     public static List<EvalMetrics> runWithMetrics(
             List<Transaction> data, int k,
@@ -82,11 +73,56 @@ public class CrossValidator {
             double chiSqThreshold, int coverageDelta,
             long seed, int maxPatternLength,
             Supplier<CMARClassifier> classifierFactory,
-            double classMinSupFraction,
-            double adaptiveMinConfFloor,
-            double adaptiveMinConfLift,
             double smoteTargetRatio,
-            boolean useBorderlineSMOTE) {
+            SmoteVariant smoteVariant) {
+        return runWithMetrics(data, k, minSupportPct, minConfidence, chiSqThreshold,
+            coverageDelta, seed, maxPatternLength, classifierFactory,
+            smoteTargetRatio, smoteVariant, false);
+    }
+
+    /** Overload với cờ MCWCAR CCO weighted-support (Wu et al. 2024). */
+    public static List<EvalMetrics> runWithMetrics(
+            List<Transaction> data, int k,
+            double minSupportPct, double minConfidence,
+            double chiSqThreshold, int coverageDelta,
+            long seed, int maxPatternLength,
+            Supplier<CMARClassifier> classifierFactory,
+            double smoteTargetRatio,
+            SmoteVariant smoteVariant,
+            boolean useCcoWeighting) {
+        return runWithMetrics(data, k, minSupportPct, minConfidence, chiSqThreshold,
+            coverageDelta, seed, maxPatternLength, classifierFactory,
+            smoteTargetRatio, smoteVariant, useCcoWeighting, FPGrowth.WeightMode.CCO);
+    }
+
+    /** Overload đầy đủ với WeightMode (CCO / MI / HYBRID) — MCWCAR Wu et al. 2024. */
+    public static List<EvalMetrics> runWithMetrics(
+            List<Transaction> data, int k,
+            double minSupportPct, double minConfidence,
+            double chiSqThreshold, int coverageDelta,
+            long seed, int maxPatternLength,
+            Supplier<CMARClassifier> classifierFactory,
+            double smoteTargetRatio,
+            SmoteVariant smoteVariant,
+            boolean useCcoWeighting,
+            FPGrowth.WeightMode weightMode) {
+        return runWithMetrics(data, k, minSupportPct, minConfidence, chiSqThreshold,
+            coverageDelta, seed, maxPatternLength, classifierFactory,
+            smoteTargetRatio, smoteVariant, useCcoWeighting, weightMode, false);
+    }
+
+    /** Overload đầy đủ nhất — thêm cờ per-class minSup (MSApriori-lite, Phase 1). */
+    public static List<EvalMetrics> runWithMetrics(
+            List<Transaction> data, int k,
+            double minSupportPct, double minConfidence,
+            double chiSqThreshold, int coverageDelta,
+            long seed, int maxPatternLength,
+            Supplier<CMARClassifier> classifierFactory,
+            double smoteTargetRatio,
+            SmoteVariant smoteVariant,
+            boolean useCcoWeighting,
+            FPGrowth.WeightMode weightMode,
+            boolean usePerClassMinSup) {
 
         // --- Chia có phân tầng: nhóm theo lớp, rồi phân phối ---
         List<Transaction> shuffled = new ArrayList<>(data);
@@ -118,58 +154,40 @@ public class CrossValidator {
             // --- SMOTE: áp dụng oversampling minority class TRƯỚC khi tính thresholds ---
             if (smoteTargetRatio > 0) {
                 int beforeSize = trainData.size();
-                if (useBorderlineSMOTE) {
-                    trainData = BorderlineSMOTE.apply(trainData, 5, smoteTargetRatio, seed + fold);
-                } else {
-                    trainData = SMOTE.apply(trainData, 5, smoteTargetRatio, seed + fold);
+                String tag;
+                switch (smoteVariant) {
+                    case BORDERLINE:
+                        trainData = BorderlineSMOTE.apply(trainData, 5, smoteTargetRatio, seed + fold);
+                        tag = "Borderline-SMOTE";
+                        break;
+                    case MWMOTE:
+                        trainData = MWMOTE.apply(trainData, 5, smoteTargetRatio, seed + fold);
+                        tag = "MWMOTE";
+                        break;
+                    case VANILLA:
+                    default:
+                        trainData = SMOTE.apply(trainData, 5, smoteTargetRatio, seed + fold);
+                        tag = "SMOTE";
+                        break;
                 }
                 minSupport = Math.max(2, (int) Math.round(trainData.size() * minSupportPct));
                 if (fold == 0) {
-                    String tag = useBorderlineSMOTE ? "Borderline-SMOTE" : "SMOTE";
                     System.out.println("    " + tag + " applied (fold 0): " + beforeSize
                         + " -> " + trainData.size() + " records");
-                }
-            }
-
-            // --- Tính classFreq cho H2/H3 (sau SMOTE nếu có) ---
-            Map<String, Integer> classFreq = null;
-            if (classMinSupFraction > 0 || adaptiveMinConfFloor > 0) {
-                classFreq = new HashMap<>();
-                for (Transaction t : trainData) {
-                    classFreq.merge(t.getClassLabel(), 1, Integer::sum);
-                }
-            }
-
-            // --- H2: minSup(c) = supPct × freq(c) ---
-            Map<String, Integer> classMinSupMap = null;
-            if (classMinSupFraction > 0) {
-                classMinSupMap = new HashMap<>();
-                for (Map.Entry<String, Integer> e : classFreq.entrySet()) {
-                    int thr = Math.max(2,
-                        (int) Math.round(classMinSupFraction * e.getValue()));
-                    classMinSupMap.put(e.getKey(), thr);
-                }
-            }
-
-            // --- H3: minConf(c) = min(globalMinConf, max(floor, lift × freq(c)/N)) ---
-            Map<String, Double> classMinConfMap = null;
-            if (adaptiveMinConfFloor > 0) {
-                classMinConfMap = new HashMap<>();
-                int N = trainData.size();
-                for (Map.Entry<String, Integer> e : classFreq.entrySet()) {
-                    double classRatio = (double) e.getValue() / N;
-                    double thr = Math.min(minConfidence,
-                        Math.max(adaptiveMinConfFloor,
-                                 adaptiveMinConfLift * classRatio));
-                    classMinConfMap.put(e.getKey(), thr);
                 }
             }
 
             // --- Mining CAR ---
             FPGrowth fpGrowth = new FPGrowth(minSupport);
             fpGrowth.setMaxPatternLength(maxPatternLength);
-            if (classMinSupMap != null)  fpGrowth.setClassMinSupMap(classMinSupMap);
-            if (classMinConfMap != null) fpGrowth.setClassMinConfMap(classMinConfMap);
+            fpGrowth.setUseCcoWeighting(useCcoWeighting);  // MCWCAR weighted-support
+            fpGrowth.setWeightMode(weightMode);            // CCO / MI / HYBRID
+            // Phase 1: per-class minSup (MSApriori-lite) — tính trên distribution SAU SMOTE
+            if (usePerClassMinSup) {
+                Map<String, Integer> classCount = new java.util.HashMap<>();
+                for (Transaction t : trainData) classCount.merge(t.getClassLabel(), 1, Integer::sum);
+                fpGrowth.setMinSupByClass(FPGrowth.computeMinSupByClass(classCount, minSupport));
+            }
             List<AssociationRule> candidates = fpGrowth.mine(trainData, minConfidence);
 
             // --- Huấn luyện classifier ---

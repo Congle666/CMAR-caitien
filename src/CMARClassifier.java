@@ -15,7 +15,22 @@ import java.util.Map;
  *       vượt ngưỡng ý nghĩa (mặc định 3.841, p=0.05) VÀ tương quan dương.</li>
  *   <li><b>Cắt tỉa 3</b> — Database coverage (Thuật toán 1): lặp chọn luật phủ
  *       các bản ghi training; bản ghi được phủ đủ δ luật thì loại.</li>
- *   <li><b>Top-K per class</b> (tùy chọn): chọn K luật mạnh nhất mỗi lớp.</li>
+ * </ul>
+ *
+ * <p>Cải tiến H4/H5/H6 (paper Geng et al. 2025 review):</p>
+ * <ul>
+ *   <li><b>H4 — Stratified Coverage</b>: Bảo vệ top-K luật cho mỗi lớp khỏi
+ *       database coverage pruning. Đảm bảo class hiếm có đại diện trong rule set.
+ *       Inspired by iTCAR (Ong et al. 2020) và CARGBA (Cong et al. 2005).</li>
+ *   <li><b>H5 — Lift filter trong pruning</b>: Sau chi-square pruning, loại tiếp
+ *       các rules có lift &lt; 1 (no/negative correlation). Inspired by WEviRC
+ *       (Bahri et al. 2020). Optional via {@link #setUseLiftPruning}.</li>
+ *   <li><b>H5b — Composite voting weight</b>: Vote weight = confidence × Lift
+ *       với top-K rules per class. Defensible khi data đã balance (post-SMOTE).
+ *       Inspired by Brin et al. 1997 + Bahri et al. 2020. Optional via
+ *       {@link #setUseConfLiftVoting}. Active default trong v14 thesis pipeline.</li>
+ *   <li><b>H6 — Top-K voting</b>: K luật mạnh nhất per class khi vote. Set qua
+ *       {@link #setVoteTopK}. Default 0 (= dùng tất cả rules).</li>
  * </ul>
  *
  * <p>Phân lớp (classify):</p>
@@ -38,7 +53,65 @@ public class CMARClassifier {
     // --- Tham số cắt tỉa ---
     private double chiSquareThreshold = 3.841;
     private int    coverageThreshold  = 4;
-    private int    topK               = 0;  // Top-K per class (0 = disable)
+
+    // --- H4/H5/H6 config (Geng et al. 2025 review) ---
+    /** H4: Bảo vệ top-K luật cho mỗi lớp khỏi coverage pruning. 0 = tắt. */
+    private int stratifiedTopK = 0;
+    /** H5: Bật lift filter trong rule pruning — chỉ giữ rules có lift ≥ 1. */
+    private boolean useLiftPruning = false;
+    /** H6: top-K luật mạnh nhất per class khi voting (giữ χ² scoring). 0 = dùng tất cả. */
+    private int voteTopK = 0;
+    /**
+     * H5b: Bật composite voting weight = confidence × Lift (Brin 1997 + Bahri 2020).
+     * Khi bật, classify() dùng score(c) = Σ_{top-K} conf(r) × lift(r,c) thay vì weighted χ².
+     * Đáng dùng SAU SMOTE balancing (vì lift có inherent class-size bias).
+     */
+    private boolean useConfLiftVoting = false;
+    /**
+     * H5b Adaptive: ngưỡng imbalance ratio để enable conf×Lift. Default 0 (luôn enable).
+     * Khi &gt; 0, H5b chỉ active nếu originalImbalanceRatio ≥ threshold.
+     * Lý do: lift có class-size bias, hại trên mild balanced data (ratio &lt; 3:1).
+     * Recommended: 3.0 cho thesis (tránh regression trên tic-tac-toe, diabetes, horse).
+     */
+    private double adaptiveConfLiftThreshold = 0.0;
+    /**
+     * H5b Adaptive: imbalance ratio ORIGINAL của dataset (trước SMOTE).
+     * Set externally bởi pipeline trước khi train.
+     * 0 = không adaptive, fallback to classFreq post-SMOTE.
+     */
+    private double originalImbalanceRatio = 0.0;
+    /**
+     * H5c: Bật Laplace expected accuracy voting (CPAR — Yin &amp; Han 2003 SDM).
+     * Formula: Laplace(r, c) = (supportCount + 1) / (condsetSupport + numClasses)
+     * Class-size aware NHƯNG KHÔNG bias minority/majority như conf×Lift.
+     * Defensible cho cả balanced và imbalanced data.
+     */
+    private boolean useLaplaceVoting = false;
+    /**
+     * H5d: Bật Ensemble voting — combine wχ² và conf×Lift với weights bằng nhau.
+     * Inspired by ARC-AC (Antonie &amp; Zaïane 2002) — multi-measure ensemble.
+     * Mục đích: kết hợp ưu điểm của 2 metrics (wχ² balanced cho normal, conf×Lift boost minority).
+     */
+    private boolean useEnsembleVoting = false;
+    /**
+     * H5e: Bật Added Value (AV) voting — Ahmed et al. 2000, MCWCAR (Wu et al. 2024 EAAI).
+     * AV(rule,c) = confidence − P(c). Bất đối xứng, bắt tương quan âm, không bias
+     * majority như confidence thuần → tốt cho imbalanced. score(c) = Σ_{top-K, AV>0} AV.
+     */
+    private boolean useAvVoting = false;
+    /**
+     * H5e Adaptive: ngưỡng imbalance ratio để enable AV voting. Default 0 (luôn enable).
+     * Khi &gt; 0, AV chỉ active nếu originalImbalanceRatio ≥ threshold; ngược lại
+     * fallback weighted-χ² (baseline). Tránh hại trên data đã cân bằng (vd tic-tac-toe).
+     */
+    private double adaptiveAvThreshold = 0.0;
+    /**
+     * Cost-sensitive voting exponent β (King &amp; Zeng 2001 threshold-moving /
+     * cost-sensitive learning). Score lớp c được nhân (N/classCount)^β → lớp hiếm
+     * được boost, tăng recall/F1 minority. β=0 → tắt (không boost). β=0.5 nhẹ,
+     * β=1.0 = inverse-frequency đầy đủ. Chỉ áp trong classifyByAV.
+     */
+    private double costSensitiveBeta = 0.0;
 
     // --- Thống kê ---
     private int candidateCount;
@@ -48,7 +121,28 @@ public class CMARClassifier {
 
     public void setChiSquareThreshold(double threshold) { this.chiSquareThreshold = threshold; }
     public void setCoverageThreshold(int delta)         { this.coverageThreshold = delta; }
-    public void setTopK(int k)                          { this.topK = k; }
+    /** H4: Set 0 để tắt (CMAR gốc). Set 10 để giữ top-10 luật/class trong coverage pruning. */
+    public void setStratifiedTopK(int k)                { this.stratifiedTopK = k; }
+    /** H5: Bật lift filter trong pruning — loại rules có lift &lt; 1. */
+    public void setUseLiftPruning(boolean use)          { this.useLiftPruning = use; }
+    /** H6: top-K rules per class khi voting (giữ χ² scoring). 0 = dùng tất cả. */
+    public void setVoteTopK(int k)                      { this.voteTopK = k; }
+    /** H5b: Bật composite voting = conf × Lift (Brin 1997 + Bahri 2020). Đáng dùng SAU SMOTE. */
+    public void setUseConfLiftVoting(boolean use)       { this.useConfLiftVoting = use; }
+    /** H5b Adaptive: chỉ enable conf×Lift khi imbalance ratio ≥ threshold. 0 = luôn enable. */
+    public void setAdaptiveConfLiftThreshold(double t)  { this.adaptiveConfLiftThreshold = t; }
+    /** Set imbalance ratio ORIGINAL (trước SMOTE) — dùng cho adaptive H5b decision. */
+    public void setOriginalImbalanceRatio(double r)     { this.originalImbalanceRatio = r; }
+    /** H5c: Bật Laplace voting (CPAR — Yin &amp; Han 2003). Class-size aware, no bias. */
+    public void setUseLaplaceVoting(boolean use)        { this.useLaplaceVoting = use; }
+    /** H5d: Bật Ensemble voting — combine wχ² + conf×Lift normalized. */
+    public void setUseEnsembleVoting(boolean use)       { this.useEnsembleVoting = use; }
+    /** H5e: Bật Added Value voting (MCWCAR — Wu et al. 2024). AV = confidence − P(c). */
+    public void setUseAvVoting(boolean use)             { this.useAvVoting = use; }
+    /** H5e Adaptive: chỉ enable AV khi imbalance ratio ≥ threshold. 0 = luôn enable. */
+    public void setAdaptiveAvThreshold(double t)        { this.adaptiveAvThreshold = t; }
+    /** Cost-sensitive voting: nhân score lớp c với (N/classCount)^β. β=0 tắt. */
+    public void setCostSensitiveBeta(double beta)       { this.costSensitiveBeta = beta; }
 
     // -----------------------------------------------------------------------
     // Huấn luyện
@@ -92,13 +186,6 @@ public class CMARClassifier {
         this.afterCoveragePruneCount = this.rules.size();
         System.out.println("    Cat tia 3 (db coverage, delta=" + coverageThreshold + "):  "
             + afterPrune2.size() + " -> " + this.rules.size());
-
-        // --- Top-K selection (tùy chọn) ---
-        if (topK > 0) {
-            this.rules = selectTopKRulesPerClass(this.rules, topK);
-            System.out.println("    Top-K selection (k=" + topK + "): "
-                + this.afterCoveragePruneCount + " -> " + this.rules.size());
-        }
 
         // --- Xây CR-tree để lưu luật nén gọn + truy vấn nhanh ---
         this.crTree = new CRTree(itemFreq);
@@ -152,44 +239,23 @@ public class CMARClassifier {
             double d = totalTransactions - a - b - c;
             boolean positivelyCorrelated = (a * d > b * c);
 
-            if (chi2 >= chiSquareThreshold && positivelyCorrelated) {
-                kept.add(r);
+            if (chi2 < chiSquareThreshold || !positivelyCorrelated) continue;
+
+            // --- H5: Lift filter — chỉ giữ rules có lift ≥ 1 (positive correlation) ---
+            // lift = confidence / P(class) = confidence × N / classFreq[class]
+            // Lift < 1: rule có antecedent và consequent NEGATIVE correlation hoặc
+            // độc lập → noise rule, loại bỏ.
+            // Reference: WEviRC (Bahri et al. 2020), Wu et al. 2022.
+            if (useLiftPruning) {
+                int clsFreq = classFreq.getOrDefault(r.getClassLabel(), 1);
+                if (clsFreq <= 0) continue;
+                double lift = r.getConfidence() * totalTransactions / (double) clsFreq;
+                if (lift < 1.0) continue;
             }
+
+            kept.add(r);
         }
         return kept;
-    }
-
-    // -----------------------------------------------------------------------
-    // Top-K Selection Per Class
-    // -----------------------------------------------------------------------
-
-    private List<AssociationRule> selectTopKRulesPerClass(
-            List<AssociationRule> rules, int k) {
-        Map<String, List<AssociationRule>> byClass = new HashMap<>();
-        List<AssociationRule> result = new ArrayList<>();
-
-        for (AssociationRule r : rules) {
-            byClass.computeIfAbsent(r.getClassLabel(), cls -> new ArrayList<>())
-                   .add(r);
-        }
-
-        for (Map.Entry<String, List<AssociationRule>> entry : byClass.entrySet()) {
-            String cls = entry.getKey();
-            List<AssociationRule> rulesForClass = entry.getValue();
-
-            rulesForClass.sort((r1, r2) -> Double.compare(
-                computeChiSquare(r2, cls),
-                computeChiSquare(r1, cls)
-            ));
-
-            int limit = Math.min(k, rulesForClass.size());
-            for (int i = 0; i < limit; i++) {
-                result.add(rulesForClass.get(i));
-            }
-        }
-
-        Collections.sort(result);
-        return result;
     }
 
     // -----------------------------------------------------------------------
@@ -205,8 +271,45 @@ public class CMARClassifier {
         int remainingCount = n;
 
         List<AssociationRule> selected = new ArrayList<>();
+        java.util.Set<AssociationRule> alreadyAdded = new java.util.HashSet<>();
 
+        // --- H4: Stratified Coverage — bảo vệ top-K luật mỗi lớp trước khi prune ---
+        // Lý do: minority class có thể bị "starved" — rules của nó bị prune sớm
+        // do coverage threshold đạt từ majority records. Reserve top-K rules/class
+        // để đảm bảo mỗi class có đại diện trong final rule set.
+        if (stratifiedTopK > 0) {
+            Map<String, List<AssociationRule>> byClass = new HashMap<>();
+            for (AssociationRule r : rules) {
+                byClass.computeIfAbsent(r.getClassLabel(), k -> new ArrayList<>()).add(r);
+            }
+            // rules đã được sort theo priority (confidence DESC, support DESC, |condset| ASC)
+            // → các rule đầu trong list của mỗi class là TOP rules
+            for (List<AssociationRule> classRules : byClass.values()) {
+                int take = Math.min(stratifiedTopK, classRules.size());
+                for (int i = 0; i < take; i++) {
+                    AssociationRule r = classRules.get(i);
+                    if (alreadyAdded.add(r)) {
+                        selected.add(r);
+                        // Update coverage cho các record được covered bởi rule này
+                        for (int j = 0; j < n; j++) {
+                            if (removed[j]) continue;
+                            Transaction t = trainData.get(j);
+                            if (r.matches(t) && r.getClassLabel().equals(t.getClassLabel())) {
+                                coverCount[j]++;
+                                if (coverCount[j] >= coverageThreshold) {
+                                    removed[j] = true;
+                                    remainingCount--;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Cắt tỉa 3 chuẩn: greedy coverage ---
         for (AssociationRule rule : rules) {
+            if (alreadyAdded.contains(rule)) continue;
             if (remainingCount == 0) break;
             boolean coversAny = false;
 
@@ -224,9 +327,14 @@ public class CMARClassifier {
                 }
             }
 
-            if (coversAny) selected.add(rule);
+            if (coversAny) {
+                selected.add(rule);
+                alreadyAdded.add(rule);
+            }
         }
 
+        // Sort lại theo priority để giữ thứ tự khi predict
+        Collections.sort(selected);
         return selected;
     }
 
@@ -248,18 +356,353 @@ public class CMARClassifier {
             return byClass.keySet().iterator().next();
         }
 
-        // Weighted chi-square: score(c) = Σ [χ²(r)]² / maxχ²(r)
+        // --- H5e: Added Value voting (MCWCAR — Wu et al. 2024 EAAI) ---
+        // Adaptive gating: trên data đã cân bằng (ratio < threshold) → fallback
+        // weighted-χ² (baseline) để tránh hại (vd tic-tac-toe, horse). Trên data
+        // mất cân bằng → dùng AV (cứu minority).
+        if (useAvVoting) {
+            if (adaptiveAvThreshold > 0) {
+                double ratio;
+                if (originalImbalanceRatio > 0) {
+                    ratio = originalImbalanceRatio;
+                } else {
+                    int maxFreq = 0, minFreq = Integer.MAX_VALUE;
+                    for (int f : classFreq.values()) {
+                        if (f > maxFreq) maxFreq = f;
+                        if (f > 0 && f < minFreq) minFreq = f;
+                    }
+                    ratio = (minFreq > 0 && minFreq != Integer.MAX_VALUE)
+                          ? (double) maxFreq / minFreq : Double.MAX_VALUE;
+                }
+                if (ratio < adaptiveAvThreshold) {
+                    return classifyByWeightedChi2(byClass);
+                }
+            }
+            return classifyByAV(byClass);
+        }
+
+        // --- H5d: Ensemble voting — combine wχ² + conf×Lift ---
+        // Normalize cả 2 scores → max=1 per class, sum với weight 0.5 each.
+        // Inspired by ARC-AC (Antonie & Zaïane 2002) multi-measure ensemble.
+        if (useEnsembleVoting) {
+            return classifyByEnsemble(byClass);
+        }
+
+        // --- H5c: Laplace voting (CPAR — Yin & Han 2003 SDM) ---
+        if (useLaplaceVoting) {
+            return classifyByLaplace(byClass);
+        }
+
+        // --- H5b: Composite voting weight = confidence × Lift ---
+        // Inspired by Brin et al. (1997) — Lift đo correlation thực
+        // và Bahri et al. (2020) WEviRC — Lift filter cho AC.
+        // Composite formula: w(r) = confidence(r) × Lift(r, c) = conf² × N / classFreq[c]
+        //
+        // H5b Adaptive: chỉ enable nếu imbalance ratio ≥ threshold.
+        // Lý do: lift có class-size bias, hại trên mild balanced data (1.5-2:1).
+        // Default threshold = 0 (luôn enable). Set 3.0 để tránh regression trên balanced.
+        if (useConfLiftVoting) {
+            if (adaptiveConfLiftThreshold > 0) {
+                // Check imbalance ratio — ưu tiên originalImbalanceRatio (pre-SMOTE)
+                double ratio;
+                if (originalImbalanceRatio > 0) {
+                    ratio = originalImbalanceRatio;
+                } else {
+                    int maxFreq = 0, minFreq = Integer.MAX_VALUE;
+                    for (int f : classFreq.values()) {
+                        if (f > maxFreq) maxFreq = f;
+                        if (f > 0 && f < minFreq) minFreq = f;
+                    }
+                    ratio = (minFreq > 0) ? (double) maxFreq / minFreq : Double.MAX_VALUE;
+                }
+                if (ratio < adaptiveConfLiftThreshold) {
+                    return classifyByWeightedChi2(byClass);
+                }
+            }
+            // H5b: conf × Lift composite voting (Brin 1997 + Bahri 2020)
+            // (AV MCWCAR 2024 cũng có sẵn — gọi classifyByAV nếu muốn alternative)
+            return classifyByConfLift(byClass);
+        }
+
+        // --- Weighted chi-square (CMAR Li 2001 §4): default voting ---
+        return classifyByWeightedChi2(byClass);
+    }
+
+    /**
+     * H5e voting: Added Value (AV) — Ahmed et al. (2000), MCWCAR (Wu et al. 2024 EAAI).
+     *
+     * <p>Formula: AV(rule, class) = confidence(rule) - P(class)</p>
+     *
+     * <p>Đặc tính (so với conf×Lift):</p>
+     * <ul>
+     *   <li><b>Asymmetric</b>: AV(X→Y) ≠ AV(Y→X) → đúng bản chất rule</li>
+     *   <li><b>Bounded</b>: AV ∈ [-1, 1] → không over-aggressive như conf×Lift</li>
+     *   <li><b>Negative correlation</b>: AV &lt; 0 = anti-pattern (loại)</li>
+     *   <li><b>Class-size bias MILD</b>: subtractive thay vì multiplicative</li>
+     * </ul>
+     *
+     * <p>Score(c) = Σ_{top-K rules of c có AV &gt; 0} AV(rule, c)</p>
+     *
+     * <p>Reference: Wu, W., Wang, S., Liu, B., Shao, Y., Xie, W. (2024).
+     * "A novel software defect prediction approach via weighted classification
+     * based on association rule mining". Engineering Applications of Artificial
+     * Intelligence 129, 107622.</p>
+     */
+    private String classifyByAV(Map<String, List<AssociationRule>> byClass) {
+        double n = totalTransactions;
+        String bestClass = defaultClass;
+        double bestScore = Double.NEGATIVE_INFINITY;
+
+        for (Map.Entry<String, List<AssociationRule>> entry : byClass.entrySet()) {
+            String cls = entry.getKey();
+            int classCount = classFreq.getOrDefault(cls, 0);
+            if (classCount <= 0) continue;
+            double pClass = classCount / n;
+
+            List<AssociationRule> classRules = entry.getValue();
+
+            // Sort theo AV DESC để pick top-K
+            final double pClassFinal = pClass;
+            classRules.sort((r1, r2) -> {
+                double av1 = r1.getConfidence() - pClassFinal;
+                double av2 = r2.getConfidence() - pClassFinal;
+                return Double.compare(av2, av1);
+            });
+
+            // Sum AV cho top-K rules có AV > 0 (positive correlation)
+            int limit = (voteTopK > 0) ? Math.min(voteTopK, classRules.size())
+                                       : classRules.size();
+            double score = 0.0;
+            for (int i = 0; i < limit; i++) {
+                double av = classRules.get(i).getConfidence() - pClass;
+                if (av > 0) score += av;  // positive correlation only
+            }
+
+            // Cost-sensitive boost: lớp hiếm (classCount nhỏ) được nhân hệ số lớn
+            // → tăng recall/F1 minority (King & Zeng 2001 threshold-moving).
+            if (costSensitiveBeta > 0 && classCount > 0) {
+                score *= Math.pow(n / classCount, costSensitiveBeta);
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestClass = cls;
+            }
+        }
+        return bestClass;
+    }
+
+    /**
+     * Weighted chi-square voting (CMAR Li 2001 §4 gốc).
+     * score(c) = Σ [χ²(r)]² / maxχ²(r)
+     * H6: nếu voteTopK > 0, chỉ sum top-K rules theo χ² strongest per class.
+     */
+    private String classifyByWeightedChi2(Map<String, List<AssociationRule>> byClass) {
         String bestClass = defaultClass;
         double bestScore = -1.0;
 
         for (Map.Entry<String, List<AssociationRule>> entry : byClass.entrySet()) {
             String cls = entry.getKey();
-            double score = 0.0;
-            for (AssociationRule rule : entry.getValue()) {
+            List<AssociationRule> classRules = entry.getValue();
+
+            // Pre-compute weighted χ² cho mỗi rule
+            double[] weightedChi2 = new double[classRules.size()];
+            for (int i = 0; i < classRules.size(); i++) {
+                AssociationRule rule = classRules.get(i);
                 double chi2    = computeChiSquare(rule, cls);
                 double maxChi2 = computeMaxChiSquare(rule, cls);
-                if (maxChi2 > 0) score += (chi2 * chi2) / maxChi2;
+                weightedChi2[i] = (maxChi2 > 0) ? (chi2 * chi2) / maxChi2 : 0.0;
             }
+
+            double score = 0.0;
+            if (voteTopK > 0 && classRules.size() > voteTopK) {
+                Integer[] idx = new Integer[classRules.size()];
+                for (int i = 0; i < idx.length; i++) idx[i] = i;
+                java.util.Arrays.sort(idx, (a, b) -> Double.compare(weightedChi2[b], weightedChi2[a]));
+                int limit = Math.min(voteTopK, idx.length);
+                for (int i = 0; i < limit; i++) score += weightedChi2[idx[i]];
+            } else {
+                for (double w : weightedChi2) score += w;
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestClass = cls;
+            }
+        }
+        return bestClass;
+    }
+
+    /**
+     * H5d voting: Ensemble of wχ² + conf×Lift, normalized + averaged.
+     *
+     * <p>Combine 2 voting methods bằng cách normalize từng score về [0,1]
+     * (chia max), rồi average với weight 0.5 each. Mục đích: tận dụng ưu điểm
+     * của cả 2 metrics — wχ² robust cho normal data, conf×Lift boost minority.</p>
+     *
+     * <p>Inspired by ARC-AC (Antonie &amp; Zaïane 2002) multi-measure ensemble.</p>
+     */
+    private String classifyByEnsemble(Map<String, List<AssociationRule>> byClass) {
+        double n = totalTransactions;
+        Map<String, Double> wChi2Scores = new HashMap<>();
+        Map<String, Double> confLiftScores = new HashMap<>();
+
+        // Compute wχ² + conf×Lift cho mỗi class
+        for (Map.Entry<String, List<AssociationRule>> entry : byClass.entrySet()) {
+            String cls = entry.getKey();
+            int classCount = classFreq.getOrDefault(cls, 0);
+
+            // wχ² — sum over all matching rules (full, không top-K)
+            double s1 = 0.0;
+            for (AssociationRule rule : entry.getValue()) {
+                double chi2 = computeChiSquare(rule, cls);
+                double maxChi2 = computeMaxChiSquare(rule, cls);
+                if (maxChi2 > 0) s1 += (chi2 * chi2) / maxChi2;
+            }
+            wChi2Scores.put(cls, s1);
+
+            // conf×Lift — top-K rules (giảm noise)
+            double s2 = 0.0;
+            if (classCount > 0) {
+                List<AssociationRule> classRules = new ArrayList<>(entry.getValue());
+                classRules.sort((r1, r2) -> {
+                    double a = r1.getConfidence() * r1.getConfidence() * n / classCount;
+                    double b = r2.getConfidence() * r2.getConfidence() * n / classCount;
+                    return Double.compare(b, a);
+                });
+                int limit = (voteTopK > 0) ? Math.min(voteTopK, classRules.size())
+                                           : classRules.size();
+                for (int i = 0; i < limit; i++) {
+                    AssociationRule rule = classRules.get(i);
+                    double conf = rule.getConfidence();
+                    double lift = conf * n / classCount;
+                    if (lift >= 1.0) s2 += conf * lift;
+                }
+            }
+            confLiftScores.put(cls, s2);
+        }
+
+        // Normalize: chia max trong từng score group
+        double maxW = wChi2Scores.values().stream().mapToDouble(Double::doubleValue).max().orElse(1.0);
+        double maxC = confLiftScores.values().stream().mapToDouble(Double::doubleValue).max().orElse(1.0);
+        if (maxW <= 0) maxW = 1.0;
+        if (maxC <= 0) maxC = 1.0;
+
+        // Combined score + pick winner
+        String bestClass = defaultClass;
+        double bestScore = -1.0;
+        for (String cls : byClass.keySet()) {
+            double normW = wChi2Scores.get(cls) / maxW;
+            double normC = confLiftScores.get(cls) / maxC;
+            double combined = 0.5 * normW + 0.5 * normC;
+            if (combined > bestScore) {
+                bestScore = combined;
+                bestClass = cls;
+            }
+        }
+        return bestClass;
+    }
+
+    /**
+     * H5c voting: Laplace expected accuracy (CPAR — Yin &amp; Han 2003 SDM).
+     *
+     * <p>Formula: Laplace(rule, class) = (supportCount + 1) / (condsetSupport + numClasses)</p>
+     *
+     * <p>Đặc tính:</p>
+     * <ul>
+     *   <li>Add-1 smoothing → tránh extreme values, robust với rules có support nhỏ</li>
+     *   <li>Class-size aware qua numClasses (denominator), KHÔNG bias minority/majority như conf×Lift</li>
+     *   <li>Defensible cho cả balanced và imbalanced data</li>
+     * </ul>
+     *
+     * <p>Reference: Yin, X., &amp; Han, J. (2003). "CPAR: Classification based on
+     * Predictive Association Rules". SIAM SDM 2003.</p>
+     */
+    private String classifyByLaplace(Map<String, List<AssociationRule>> byClass) {
+        int numClasses = classFreq.size();
+        String bestClass = defaultClass;
+        double bestScore = -1.0;
+
+        for (Map.Entry<String, List<AssociationRule>> entry : byClass.entrySet()) {
+            String cls = entry.getKey();
+            List<AssociationRule> classRules = entry.getValue();
+
+            // Sort theo Laplace DESC để pick top-K
+            classRules.sort((r1, r2) -> {
+                double s1 = (r1.getSupportCount() + 1.0)
+                          / (r1.getCondsetSupportCount() + numClasses);
+                double s2 = (r2.getSupportCount() + 1.0)
+                          / (r2.getCondsetSupportCount() + numClasses);
+                return Double.compare(s2, s1);
+            });
+
+            // Sum Laplace top-K rules
+            int limit = (voteTopK > 0) ? Math.min(voteTopK, classRules.size())
+                                       : classRules.size();
+            double score = 0.0;
+            for (int i = 0; i < limit; i++) {
+                AssociationRule rule = classRules.get(i);
+                double laplace = (rule.getSupportCount() + 1.0)
+                              / (rule.getCondsetSupportCount() + numClasses);
+                score += laplace;
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestClass = cls;
+            }
+        }
+        return bestClass;
+    }
+
+    /**
+     * H5b voting: composite weight = confidence × Lift, top-K rules per class.
+     *
+     * <p>Formula: score(c) = Σ_{top-K rules of c} conf(r) × lift(r, c)
+     *           = Σ_{top-K} conf² × N / classFreq[c]</p>
+     *
+     * <p><b>Tại sao formula này</b>:
+     * <ul>
+     *   <li>Confidence: rule prediction accuracy (Li-Han-Pei 2001 CMAR)</li>
+     *   <li>Lift: positive correlation strength (Brin 1997 SIGMOD)</li>
+     *   <li>Tích: chỉ rule "vừa accurate vừa correlated" mới quan trọng</li>
+     * </ul></p>
+     *
+     * <p><b>Lưu ý</b>: Lift có inherent class-size bias (lift ↑ khi class ↓).
+     * Nên dùng SAU SMOTE/Borderline đã balance classes — bias giảm đáng kể.</p>
+     */
+    private String classifyByConfLift(Map<String, List<AssociationRule>> byClass) {
+        double n = totalTransactions;
+        String bestClass = defaultClass;
+        double bestScore = -1.0;
+
+        for (Map.Entry<String, List<AssociationRule>> entry : byClass.entrySet()) {
+            String cls = entry.getKey();
+            int classCount = classFreq.getOrDefault(cls, 0);
+            if (classCount <= 0) continue;  // class chưa từng thấy trong training
+
+            List<AssociationRule> classRules = entry.getValue();
+
+            // Sort theo conf × lift DESC để pick top-K
+            classRules.sort((r1, r2) -> {
+                double s1 = r1.getConfidence() * r1.getConfidence() * n / classCount;
+                double s2 = r2.getConfidence() * r2.getConfidence() * n / classCount;
+                return Double.compare(s2, s1);
+            });
+
+            // Sum conf × lift cho top-K rules (chỉ rules có lift ≥ 1)
+            int limit = (voteTopK > 0) ? Math.min(voteTopK, classRules.size())
+                                       : classRules.size();
+            double score = 0.0;
+            for (int i = 0; i < limit; i++) {
+                AssociationRule rule = classRules.get(i);
+                double conf = rule.getConfidence();
+                double lift = conf * n / classCount;
+                if (lift >= 1.0) {
+                    score += conf * lift;
+                }
+            }
+
             if (score > bestScore) {
                 bestScore = score;
                 bestClass = cls;
@@ -331,7 +774,6 @@ public class CMARClassifier {
     public int                   getAfterCoveragePruneCount(){ return afterCoveragePruneCount; }
     public double                getChiSquareThreshold()    { return chiSquareThreshold; }
     public int                   getCoverageThreshold()     { return coverageThreshold; }
-    public int                   getTopK()                  { return topK; }
     public Map<String, Integer>  getClassFreq()             { return classFreq; }
     public int                   getTotalTransactions()     { return totalTransactions; }
 }

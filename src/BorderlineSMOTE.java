@@ -92,11 +92,13 @@ public final class BorderlineSMOTE {
                         majorityCount++;
                     }
                 }
-                // Phân loại theo paper Han 2005:
+                // Phân loại theo paper Han 2005 (Section 3):
                 //   NOISE  : majorityCount == kEff (tất cả là majority)
-                //   DANGER : kEff/2 ≤ majorityCount < kEff
-                //   SAFE   : majorityCount < kEff/2
-                int halfK = kEff / 2;
+                //   DANGER : ⌈k/2⌉ ≤ majorityCount < kEff   ← BUG #3 fix: ceiling
+                //   SAFE   : majorityCount < ⌈k/2⌉
+                // Trước đây dùng kEff/2 (integer division = floor) → ngưỡng quá lỏng:
+                // k=5 → floor(5/2)=2 nhưng paper muốn ceil(5/2)=3.
+                int halfK = (kEff + 1) / 2;  // ceiling division
                 if (majorityCount == kEff) {
                     // NOISE — skip
                 } else if (majorityCount >= halfK) {

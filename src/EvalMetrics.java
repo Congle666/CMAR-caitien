@@ -24,6 +24,11 @@ public final class EvalMetrics {
     public double macroF1;
     public double weightedF1;
 
+    /** G-mean = (∏_c recall_c)^(1/k) trên các lớp có support>0 (imbalanced metric). */
+    public double gMean;
+    /** Balanced accuracy = mean(recall_c) trên các lớp có support>0. */
+    public double balancedAcc;
+
     /** Chỉ số từng lớp, theo thứ tự xuất hiện đầu tiên trong tập test. */
     public Map<String, ClassMetrics> perClass = new LinkedHashMap<>();
 
@@ -106,9 +111,12 @@ public final class EvalMetrics {
         }
 
         // --- Tính P/R/F1 + support cho từng lớp ---
+        // BUG-4 fix: chỉ count classes có support > 0 vào macroF1 denominator
+        // (tránh ghost classes — class chỉ xuất hiện trong predictions làm macroF1 thấp giả).
         double sumF1 = 0.0;
         double sumF1Weighted = 0.0;
         int totalSupport = 0;
+        int countWithSupport = 0;
         for (ClassMetrics cm : byClass.values()) {
             cm.support = cm.tp + cm.fn;
             cm.precision = safeDiv(cm.tp, cm.tp + cm.fp);
@@ -116,7 +124,10 @@ public final class EvalMetrics {
             cm.f1        = (cm.precision + cm.recall) == 0
                             ? 0.0
                             : 2 * cm.precision * cm.recall / (cm.precision + cm.recall);
-            sumF1 += cm.f1;
+            if (cm.support > 0) {
+                sumF1 += cm.f1;
+                countWithSupport++;
+            }
             sumF1Weighted += cm.f1 * cm.support;
             totalSupport += cm.support;
         }
@@ -124,8 +135,11 @@ public final class EvalMetrics {
         m.perClass      = byClass;
         m.totalSupport  = totalSupport;
         m.accuracy      = testData.isEmpty() ? 0.0 : (double) totalCorrect / testData.size();
-        m.macroF1       = byClass.isEmpty() ? 0.0 : sumF1 / byClass.size();
+        m.macroF1       = countWithSupport == 0 ? 0.0 : sumF1 / countWithSupport;
         m.weightedF1    = totalSupport == 0 ? 0.0 : sumF1Weighted / totalSupport;
+
+        // --- G-mean + balanced accuracy (imbalanced metrics) ---
+        fillImbalancedMetrics(m, byClass);
 
         return m;
     }
@@ -174,8 +188,7 @@ public final class EvalMetrics {
             }
         }
 
-        // --- Tính lại P/R/F1 từng lớp từ các tổng đã cộng dồn ---
-        double sumF1 = 0.0;
+        // --- Tính lại P/R/F1 từng lớp từ các tổng đã cộng dồn (cho per-class breakdown) ---
         double sumF1Weighted = 0.0;
         int totalSupport = 0;
         for (ClassMetrics cm : byClass.values()) {
@@ -185,7 +198,6 @@ public final class EvalMetrics {
             cm.f1        = (cm.precision + cm.recall) == 0
                             ? 0.0
                             : 2 * cm.precision * cm.recall / (cm.precision + cm.recall);
-            sumF1 += cm.f1;
             sumF1Weighted += cm.f1 * cm.support;
             totalSupport += cm.support;
         }
@@ -193,14 +205,18 @@ public final class EvalMetrics {
         agg.perClass     = byClass;
         agg.totalSupport = totalSupport;
 
-        // --- Trung bình accuracy + stddev qua các fold ---
+        // BUG-1 fix: macroF1 và macroF1Std đều dùng per-fold macroF1 (consistent methodology).
+        // Trước đây: macroF1 = micro-accumulated, macroF1Std = stddev per-fold macro → mismatch.
         double[] accs  = folds.stream().mapToDouble(f -> f.accuracy).toArray();
         double[] mf1s  = folds.stream().mapToDouble(f -> f.macroF1).toArray();
         agg.accuracy    = mean(accs);
         agg.accuracyStd = stddev(accs);
-        agg.macroF1     = byClass.isEmpty() ? 0.0 : sumF1 / byClass.size();
+        agg.macroF1     = mean(mf1s);   // ← per-fold avg, consistent với macroF1Std
         agg.macroF1Std  = stddev(mf1s);
         agg.weightedF1  = totalSupport == 0 ? 0.0 : sumF1Weighted / totalSupport;
+
+        // G-mean + balanced-acc từ recall per-class đã cộng dồn (micro-over-folds)
+        fillImbalancedMetrics(agg, byClass);
 
         return agg;
     }
@@ -208,6 +224,21 @@ public final class EvalMetrics {
     // -----------------------------------------------------------------------
     // Hàm tiện ích
     // -----------------------------------------------------------------------
+
+    /** Tính gMean + balancedAcc từ recall per-class (chỉ lớp support>0). */
+    private static void fillImbalancedMetrics(EvalMetrics m, Map<String, ClassMetrics> byClass) {
+        double prod = 1.0, sumR = 0.0;
+        int k = 0;
+        for (ClassMetrics cm : byClass.values()) {
+            if (cm.support > 0) {
+                prod *= cm.recall;
+                sumR += cm.recall;
+                k++;
+            }
+        }
+        m.gMean       = k == 0 ? 0.0 : Math.pow(prod, 1.0 / k);
+        m.balancedAcc = k == 0 ? 0.0 : sumR / k;
+    }
 
     private static double safeDiv(int num, int den) {
         return den == 0 ? 0.0 : (double) num / den;
@@ -220,12 +251,16 @@ public final class EvalMetrics {
         return s / v.length;
     }
 
+    /**
+     * Sample stddev (chia n-1, chuẩn statistical inference cho academic reporting).
+     * Trước đây dùng population stddev (÷n) — chỉ phù hợp cho full population.
+     */
     private static double stddev(double[] v) {
-        if (v.length == 0) return 0.0;
+        if (v.length <= 1) return 0.0;
         double m = mean(v);
         double sq = 0;
         for (double x : v) sq += (x - m) * (x - m);
-        return Math.sqrt(sq / v.length);
+        return Math.sqrt(sq / (v.length - 1));
     }
 
     /** Trả về danh sách tên các lớp, theo thứ tự xuất hiện. */
