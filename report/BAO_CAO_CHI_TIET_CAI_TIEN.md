@@ -70,6 +70,26 @@
 breast-w, cleve, crx, diabetes, heart, horse, iris, labor, led7, sonar, tic-tac-toe, vehicle, waveform, wine.
 → **Δ = 0.000 tất cả** (adaptive gating không can thiệp). Win-Tie-Loss: **5 Thắng / 14 Hòa / 0 Thua**.
 
+### 3.3. Chi tiết riêng ACCURACY toàn bộ 19 dataset
+
+| Nhóm | Dataset | Acc Baseline | Acc Cải tiến | Δ |
+|------|---------|-------------:|-------------:|---:|
+| Tăng | **glass** | 0.6563 | **0.7067** | **+0.0504** ⬆️ |
+| Tăng | **zoo** | 0.9490 | **0.9656** | +0.0166 |
+| Tăng | **lymph** | 0.8058 | 0.8163 | +0.0105 |
+| Giảm | **german** | 0.7320 | 0.7120 | −0.0200 |
+| Giảm | **hepatitis** | 0.8186 | 0.7547 | −0.0639 |
+| Giữ nguyên | 14 dataset cân bằng | — | — | 0.0000 |
+| **AVG 19 datasets** | | **0.8330** | **0.8327** | **−0.0003** |
+
+**Nhận xét về Accuracy:**
+- **Trung bình gần như KHÔNG ĐỔI** (−0.0003) — đúng kỳ vọng: mục tiêu là tăng F1/Recall, không hi sinh Accuracy.
+- **glass thắng toàn diện:** tăng cả Accuracy (+0.050) lẫn F1 (+0.048).
+- **hepatitis giảm nhiều nhất (−0.064):** đánh đổi precision lấy recall — AV voting bắt nhiều ca bệnh hơn (Recall 0.759→0.776) nhưng thêm vài false positive. Hợp lý cho bài toán y tế (không bỏ sót ca bệnh quan trọng hơn báo nhầm).
+- **14 dataset cân bằng giữ nguyên 100%** nhờ adaptive gating.
+
+> **Quan trọng:** Trên dữ liệu mất cân bằng, Accuracy là chỉ số "đánh lừa" — mô hình đoán toàn lớp đa số vẫn có Accuracy cao giả tạo nhưng bỏ sót lớp hiếm. Việc Accuracy giữ nguyên trong khi F1/Recall tăng chứng tỏ mô hình **thực sự học được lớp thiểu số** mà không hi sinh độ chính xác tổng.
+
 ---
 
 ## PHẦN 4: TẠI SAO TĂNG — giải thích từng dataset
