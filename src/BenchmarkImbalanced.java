@@ -15,7 +15,7 @@ import java.util.Map;
  * <p><b>Adaptive Strategy (đề xuất gốc của nghiên cứu):</b></p>
  * <pre>
  *   if min_class_freq &lt; 5:
- *     → Borderline-SMOTE-N (Han 2005)  — extreme minority
+ *     → MWMOTE (Barua 2014, IEEE TKDE)  — extreme minority
  *   else:
  *     → CMAR global minSup (no oversampling)
  * </pre>
@@ -52,7 +52,7 @@ public class BenchmarkImbalanced {
         System.out.println("================================================================");
         System.out.println("  Pipeline: Baseline → SMOTE → +H4 Stratified → +H5b conf×Lift");
         System.out.println("  Strategy:");
-        System.out.println("    if min_freq < 5  → Borderline-SMOTE-N (Han 2005)");
+        System.out.println("    if min_freq < 5  → MWMOTE (Barua 2014)");
         System.out.println("    else             → CMAR global minSup (no oversampling)");
         System.out.println("================================================================\n");
 
@@ -335,9 +335,9 @@ public class BenchmarkImbalanced {
         java.util.function.Supplier<CMARClassifier> factory = () -> {
             CMARClassifier c = new CMARClassifier();
             c.setStratifiedTopK(20);   // H4: bảo vệ rule minority (s20: giữ nhiều rule/class hơn)
-            c.setUseAvVoting(true);    // H5e: Added Value voting (MCWCAR)
-            c.setVoteTopK(15);         // H6: top-15 rule khi vote (tuned)
-            c.setCostSensitiveBeta(0.4);  // H5f: cost-sensitive boost minority (King & Zeng 2001), tuned
+            c.setUseAvVoting(true);    // H5e: Added Value voting (MCWCAR) — cải tiến CHÍNH
+            c.setVoteTopK(5);          // H6: top-5 rule khi vote
+            // (Cost-sensitive đã BỎ — đóng góp nhỏ, đơn giản hóa pipeline)
             return c;
         };
 
@@ -361,11 +361,12 @@ public class BenchmarkImbalanced {
                 List<EvalMetrics> foldMetrics = CrossValidator.runWithMetrics(
                     data, K_FOLD, supPct, minConfidence, chiSqThreshold, coverageDelta,
                     seed, maxLen, factory, smoteRatio, variant,
-                    true);  // ← CCO weighted-support BẬT
+                    false);  // ← KHÔNG trọng số thuộc tính ().
+                            //   CCO/MI item-weight TẮT. Chỉ SMOTE + AV + cost-sensitive.
 
                 EvalMetrics agg = EvalMetrics.average(foldMetrics);
                 results.put(name, agg);
-                System.out.printf("Acc=%.4f F1=%.4f (MCWCAR)%n", agg.accuracy, agg.macroF1);
+                System.out.printf("Acc=%.4f F1=%.4f (no-item-weight)%n", agg.accuracy, agg.macroF1);
             } catch (Exception e) {
                 throw new RuntimeException("runMcwcar failed on dataset " + name, e);
             }

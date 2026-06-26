@@ -86,6 +86,29 @@ Lớp hiếm được boost điểm vote → tăng Recall/F1. Tham số tìm qua
 
 ---
 
+## 2.8. ⭐ BẢN ĐỒ: Mỗi chỉ số ← Kỹ thuật ← 1 bài báo (1-1, không trùng)
+
+Bảng then chốt để bảo vệ luận văn — mỗi chỉ số được cải thiện nhờ kỹ thuật riêng, mỗi kỹ thuật trích dẫn ĐÚNG 1 bài báo. Bằng chứng từ thực nghiệm ablation (tách riêng từng thành phần trên 7 imbalanced datasets).
+
+| Chỉ số mục tiêu | Kỹ thuật đóng góp | Công thức | **Bài báo (DUY NHẤT)** | Bằng chứng ablation |
+|-----------------|-------------------|-----------|------------------------|---------------------|
+| **Accuracy** (giữ KHÔNG giảm) | Adaptive Gating (top-K + imbalance ratio) | bật cải tiến khi IR≥2, dùng top-K luật mạnh | **He & Garcia (2009)** | 14 dataset cân bằng Δ=0.000 |
+| **Recall** (đóng góp lớn nhất) | MWMOTE Oversampling | sinh mẫu minority | **Barua et al. (2014)** | Recall 0.699→0.746 (**+0.047**) |
+| **F1** (đóng góp lớn nhất) | CCO Weighted-Support | `support × (1+w)`, φ-coefficient | **Wu et al. — MCWCAR (2024) Eq.3** | F1 0.723→0.746 (**+0.023**) |
+| **F1 + Recall** (cộng hưởng) | Added Value Voting | `confidence − P(c)` | **Wu et al. — MCWCAR (2024) Eq.7** | F1 +0.016, Recall +0.011 |
+| **Recall** (tăng cường thêm) | Cost-Sensitive Voting | `score × (N/count)^β` | **King & Zeng (2001)** | Recall +0.11 (grid β) |
+
+**Kỹ thuật hỗ trợ (không trực tiếp tăng chỉ số):**
+| Vai trò | Kỹ thuật | Bài báo |
+|---------|----------|---------|
+| Cơ chế weighted-support nền | `support × (1+w)` | **Wang et al. (2000) — WAR** |
+| Kiểm định ý nghĩa thống kê | Wilcoxon signed-rank | **Demšar (2006)** |
+| Chỉ số đo G-mean | `(∏ recall_c)^(1/k)` | **Kubat & Matwin (1997)** |
+
+> **Tóm tắt 1 câu cho hội đồng:** "Accuracy được bảo toàn nhờ adaptive gating (He & Garcia 2009); Recall tăng nhờ MWMOTE (Barua 2014) + cost-sensitive (King & Zeng 2001); F1 tăng nhờ CCO weighted-support và Added Value voting (MCWCAR, Wu 2024)."
+
+---
+
 ## 3. THỰC NGHIỆM
 
 - **Dữ liệu:** 19 bộ UCI (5 imbalanced ratio≥2: lymph, zoo, glass, hepatitis, german; 14 cân bằng).
@@ -216,6 +239,10 @@ max-CCO (lấy max qua lớp), normalized-MI (chia /H(C)), AV voting lọc dươ
 **[7] Demšar** — Demšar, J. (2006). *Statistical Comparisons of Classifiers over Multiple Data Sets.* JMLR, 7, pp. 1–30.
 - 🔗 https://www.jmlr.org/papers/v7/demsar06a.html
 - **Xử lý gì:** Chuẩn KIỂM ĐỊNH THỐNG KÊ. Khóa luận dùng **Wilcoxon signed-rank test** + win-tie-loss để chứng minh cải tiến có ý nghĩa (p=0.0216).
+
+**[8] Kubat & Matwin** — Kubat, M., Matwin, S. (1997). *Addressing the Curse of Imbalanced Training Sets: One-Sided Selection.* ICML 1997, pp. 179–186.
+- 🔗 dblp: https://dblp.org/rec/conf/icml/KubatM97.html
+- **Xử lý gì:** Bài GỐC đề xuất **G-mean** = `(∏ recall_c)^(1/k)` làm thước đo cho dữ liệu mất cân bằng. Khóa luận dùng G-mean làm chỉ số đánh giá chính (baseline G-mean=0 trên lymph → 0.901 sau cải tiến).
 
 ### 8.2. Bài báo ĐÃ THỬ nhưng LOẠI BỎ (trung thực — chứng tỏ khảo sát đầy đủ)
 
