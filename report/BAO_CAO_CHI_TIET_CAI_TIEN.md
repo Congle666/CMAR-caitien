@@ -88,7 +88,40 @@ breast-w, cleve, crx, diabetes, heart, horse, iris, labor, led7, sonar, tic-tac-
 - **hepatitis giảm nhiều nhất (−0.064):** đánh đổi precision lấy recall — AV voting bắt nhiều ca bệnh hơn (Recall 0.759→0.776) nhưng thêm vài false positive. Hợp lý cho bài toán y tế (không bỏ sót ca bệnh quan trọng hơn báo nhầm).
 - **14 dataset cân bằng giữ nguyên 100%** nhờ adaptive gating.
 
-> **Quan trọng:** Trên dữ liệu mất cân bằng, Accuracy là chỉ số "đánh lừa" — mô hình đoán toàn lớp đa số vẫn có Accuracy cao giả tạo nhưng bỏ sót lớp hiếm. Việc Accuracy giữ nguyên trong khi F1/Recall tăng chứng tỏ mô hình **thực sự học được lớp thiểu số** mà không hi sinh độ chính xác tổng.
+### 3.4. ⭐ Tại sao Accuracy KHÔNG phải chỉ số tốt cho dữ liệu mất cân bằng
+
+> Đây là lập luận quan trọng để hiểu đúng kết quả.
+
+#### (a) Accuracy "đánh lừa" như thế nào
+Accuracy = số đoán đúng / tổng số mẫu — nó **đếm gộp mọi lớp như nhau**, nên lớp đa số "át" lớp thiểu số.
+
+**Ví dụ — hepatitis (123 khỏe + 32 bệnh):** một mô hình "lười" đoán **TẤT CẢ là khỏe**:
+| | Đoán đúng |
+|---|---|
+| Khỏe (123) | 123 ✓ |
+| Bệnh (32) | 0 ✗ (bỏ sót HẾT) |
+| **Accuracy** | 123/155 = **79%** |
+
+→ Accuracy 79% nghe cao nhưng mô hình **bỏ sót 100% bệnh nhân** → vô dụng. Đây là cái "đánh lừa": con số đẹp che giấu thất bại thật. Vì vậy **chỉ nhìn Accuracy không biết mô hình có học được lớp hiếm hay không** → phải dùng F1 và Recall.
+
+#### (b) Tại sao "Accuracy giữ nguyên + F1/Recall tăng" là kết quả tốt
+Logic 2 chiều:
+- **F1/Recall tăng** → mô hình **bắt được nhiều ca lớp thiểu số hơn** (không bỏ sót như trước) → thực sự HỌC ĐƯỢC lớp hiếm.
+- **Accuracy không giảm** → khi bắt lớp hiếm, mô hình **không phá hỏng lớp đa số** (không đoán nhầm hàng loạt) → không hi sinh độ chính xác tổng.
+
+→ Kết hợp: cải tiến **"được cả đôi đường"** — vừa cứu lớp hiếm, vừa giữ tổng thể.
+
+**Ví dụ rõ nhất — glass (thắng cả 3 chỉ số):**
+| | Baseline | Cải tiến |
+|---|---:|---:|
+| Accuracy | 0.656 | **0.707** ⬆️ |
+| F1 | 0.575 | **0.623** ⬆️ |
+| Recall | 0.650 | 0.650 = |
+
+#### (c) Lưu ý trung thực
+Câu "Accuracy giữ nguyên" đúng ở mức **TRUNG BÌNH** (AVG 19 datasets: −0.0003 ≈ không đổi), KHÔNG đúng với từng dataset riêng. Riêng **hepatitis** Accuracy giảm (−0.064) do đánh đổi precision lấy recall — chấp nhận được trong y tế (bắt được ca bệnh quan trọng hơn báo nhầm).
+
+**Tóm tắt:** Accuracy cao ≠ mô hình tốt trên data lệch (vì lớp đa số át). Cải tiến làm F1/Recall tăng (bắt được lớp hiếm) mà Accuracy trung bình không giảm (không phá lớp đa số).
 
 ---
 

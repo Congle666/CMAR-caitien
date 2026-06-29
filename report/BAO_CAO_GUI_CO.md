@@ -74,13 +74,17 @@ Trong 3 kỹ thuật, **Added Value voting là công thức cốt lõi (đóng g
 
 ### MWMOTE — oversampling như thế nào
 - **Biến thể đang dùng:** MWMOTE (Barua 2014), KHÔNG phải SMOTE gốc.
-- **Adaptive — chỉ bật khi lớp cực hiếm:**
+- **Điều kiện bật SMOTE — CÓ CƠ SỞ KHOA HỌC (He & Garcia 2009, IEEE TKDE):**
   ```
-  Ngưỡng SMOTE_TRIGGER = 5
-  if (số mẫu lớp nhỏ nhất < 5)  →  chạy MWMOTE
-  else                          →  giữ dữ liệu gốc (KHÔNG oversampling)
+  if (imbalance_ratio ≥ 2.0)  VÀ  (lớp nhỏ nhất ≥ 6 mẫu)  →  chạy MWMOTE
+  else                                                     →  KHÔNG oversampling
   ```
-  → Trong 7 dataset: chỉ **lymph** (lớp 2 mẫu) và **zoo** (lớp 4 mẫu) được oversampling; còn lại (glass ≥9, hepatitis, german...) giữ nguyên.
+  **Lý do 2 điều kiện:**
+  - `ratio ≥ 2.0`: dữ liệu đủ mất cân bằng mới cần SMOTE (He & Garcia 2009).
+  - `lớp ≥ 6 mẫu`: SMOTE dùng k=5 láng giềng → cần ≥ k+1 = 6 mẫu mới chạy đúng (He & Garcia mục 3.1). Lớp < 6 mẫu (vd lymph 2 mẫu) thì SMOTE thoái hóa thành nhân bản → KHÔNG dùng (tránh kết quả ảo).
+  → Trong các dataset: **hepatitis** (ratio 3.8, lớp 32) và **german** (ratio 2.3, lớp 300) được SMOTE; **lymph** (lớp 2 < 6) và **zoo** (lớp 4 < 6) KHÔNG SMOTE (chỉ AV voting).
+
+  > **Lưu ý:** Ngưỡng cũ "lớp < 5" đã được thay bằng ngưỡng trên vì ngưỡng cũ không có cơ sở khoa học và mâu thuẫn (SMOTE cần ≥ 6 mẫu).
 - **Tham số:** targetRatio = 1.0 (cân bằng lớp hiếm), k = 5 láng giềng gần nhất.
 - **Cách lấy láng giềng (k-nearest neighbors):** với mỗi mẫu, tìm k mẫu GẦN NÓ NHẤT. "Gần" đo bằng khoảng cách — dữ liệu của em là rời rạc (categorical) nên dùng số thuộc tính KHÁC nhau (2 bản ghi trùng càng nhiều thuộc tính → càng gần).
 
@@ -162,34 +166,32 @@ Ví dụ glass (214 mẫu): mỗi vòng train ~192 mẫu, test ~22 mẫu.
 
 | Chỉ số | CMAR gốc | Sau cải tiến | Mức tăng (tuyệt đối) |
 |--------|---------:|-------------:|---------------------:|
-| **F1-score** | 0.707 | **0.744** | **+0.037** |
-| **Recall** | 0.668 | **0.771** | **+0.103** |
-| Accuracy | 0.792 | 0.789 | giữ (~) |
+| **F1-score** | 0.707 | **0.723** | **+0.016** |
+| **Recall** | 0.668 | **0.695** | **+0.028** |
+| Accuracy | 0.792 | 0.790 | giữ (~) |
 
-### 4.2. Chi tiết từng dataset mất cân bằng (Accuracy / F1 / Recall)
+### 4.2. Chi tiết từng dataset mất cân bằng (Accuracy / F1 / Recall) — ngưỡng SMOTE mới
 
-| Dataset | Tỷ lệ MCB | CMAR gốc | Sau cải tiến |
-|---------|----------:|----------|--------------|
-| **glass** ⭐ | 8:1 | 0.656 / 0.575 / 0.650 | 0.707 / **0.623** / 0.650 |
-| **zoo** | 10:1 | 0.949 / 0.902 / 0.872 | 0.955 / 0.911 / 0.879 |
-| **hepatitis** | 4:1 | 0.819 / 0.728 / 0.759 | 0.755 / 0.700 / **0.776** |
-| **german** | 2:1 | 0.732 / 0.644 / 0.637 | 0.712 / 0.643 / 0.644 |
-| **lymph** ⚠️ | 40:1 | 0.806 / 0.686 / 0.421 | 0.816 / 0.843 / 0.908 *(lớp 2 mẫu, không đại diện)* |
+| Dataset | Tỷ lệ | SMOTE? | CMAR gốc | Sau cải tiến |
+|---------|------:|--------|----------|--------------|
+| **hepatitis** ⭐ | 3.8 | ✅ SMOTE | 0.819 / 0.728 / 0.759 | **0.840** / **0.760** / **0.806** |
+| **german** | 2.3 | ✅ SMOTE | 0.732 / 0.644 / 0.637 | 0.706 / **0.679** / **0.704** |
+| **zoo** | 10.3 | AV-only (lớp 4<6) | 0.949 / 0.902 / 0.872 | **0.962** / **0.922** / **0.914** |
+| **glass** | 8.4 | ✅ SMOTE | 0.656 / 0.575 / 0.650 | 0.640 / 0.570 / 0.635 |
+| **lymph** ⚠️ | 40.5 | AV-only (lớp 2<6) | 0.806 / 0.686 / 0.421 | 0.800 / 0.683 / 0.418 |
 
-### 4.3. Mức tăng từng dataset (tuyệt đối) + lý do tăng
+### 4.3. Mức tăng từng dataset (tuyệt đối) + lý do
 
-> Báo cáo theo **giá trị tuyệt đối** (ΔF1, ΔRecall) — KHÔNG dùng % tương đối vì khi baseline thấp, % tương đối dễ phóng đại gây hiểu nhầm.
+| Dataset | ΔF1 | ΔRecall | Lý do |
+|---------|----:|--------:|-------|
+| **hepatitis** ⭐ | **+0.032** | **+0.047** | Được SMOTE (ratio 3.8, lớp 32≥6) → đủ mẫu lớp bệnh để học → tăng cả 3 chỉ số. **Minh chứng chính.** |
+| **german** | **+0.035** | **+0.067** | Được SMOTE (ratio 2.3, lớp 300≥6) → recall lớp xấu tăng mạnh. |
+| **zoo** | +0.020 | +0.042 | AV voting (lớp 4<6 không SMOTE) → cứu các lớp nhỏ. |
+| **glass** | −0.005 | −0.015 | Được SMOTE nhưng lớp đã đủ mẫu → SMOTE gây nhiễu nhẹ (minh chứng "ratio cao không có nghĩa cần SMOTE" — He & Garcia). |
+| **lymph** ⚠️ | −0.003 | −0.003 | Lớp 2 mẫu < 6 → KHÔNG SMOTE (đúng cơ sở) → giữ ≈ baseline. Không còn "tăng ảo". |
+| **AVG (5)** | **+0.016** | **+0.028** | F1 0.707→0.723, Recall 0.668→0.695 |
 
-| Dataset | Tỷ lệ MCB | ΔF1 | ΔRecall | Lý do tăng (giải thích) |
-|---------|----------:|----:|--------:|--------------------------|
-| **glass** ⭐ | 8:1 | **+0.048** | 0.000 | 6 lớp, lớp nhỏ 9-17 mẫu (đủ mẫu, đáng tin). **AV** chống thiên vị lớp đa số → lớp hiếm (class 3, 6) dự đoán chính xác hơn (F1↑). **Minh chứng chính.** |
-| **zoo** | 10:1 | +0.009 | +0.007 | 7 lớp, vốn đã phân lớp tốt (F1 0.90) → ít dư địa tăng. |
-| **hepatitis** | 4:1 | −0.028 | +0.017 | F1 giảm nhẹ NHƯNG Recall tăng — **AV** bắt nhiều ca bệnh hơn (recall↑) đổi lại thêm false positive (precision↓). Đánh đổi hợp lý cho y tế. |
-| **german** | 2:1 | −0.001 | +0.007 | Nhị phân lệch vừa → AV cải thiện nhẹ recall lớp xấu. |
-| **lymph** ⚠️ | 40:1 | +0.157 | +0.487 | Lớp chỉ **2 mẫu** → MWMOTE sinh mẫu giúp mô hình học được. **LƯU Ý: lớp 2 mẫu, kết quả KHÔNG đại diện thống kê** (mỗi fold test chỉ ~0-1 mẫu) — chỉ minh họa, không dùng làm bằng chứng chính. |
-| **AVG (5 imbalanced)** | — | **+0.037** | **+0.103** | F1 0.707→0.744, Recall 0.668→0.771 |
-
-**Quy luật chung:** dataset càng mất cân bằng → cải tiến càng rõ. **glass** là minh chứng đáng tin nhất (đủ mẫu mỗi lớp). lymph tuy tăng nhiều nhất nhưng lớp quá nhỏ (2 mẫu) nên chỉ mang tính minh họa.
+**Quy luật:** SMOTE chỉ giúp khi dữ liệu vừa mất cân bằng vừa đủ mẫu (hepatitis, german). glass mất cân bằng cao nhưng lớp đủ mẫu → SMOTE không cần thiết. lymph quá ít mẫu → không SMOTE (tránh ảo). **Minh chứng chính: hepatitis** (tăng cả 3 chỉ số, đáng tin).
 
 ### 4.4. Trên 14 bộ dữ liệu CÂN BẰNG
 **Giữ nguyên 100% so với CMAR gốc** (adaptive gating không can thiệp) → không gây sụt giảm.
@@ -200,17 +202,18 @@ Ví dụ glass (214 mẫu): mỗi vòng train ~192 mẫu, test ~22 mẫu.
 
 ## 5. Điểm nổi bật
 
-- **glass** (minh chứng chính, các lớp đủ mẫu): F1 0.575→0.623 — cải tiến giúp các lớp hiếm (class 3, 6) được dự đoán chính xác hơn mà không hi sinh lớp khác.
-- **hepatitis:** F1 giảm nhẹ nhưng Recall tăng — đánh đổi hợp lý cho bài toán y tế (ưu tiên không bỏ sót ca bệnh).
-- **lymph** (lớp 2 mẫu): Recall 0.42→0.91 — minh họa khả năng cứu lớp cực hiếm, NHƯNG lưu ý lớp quá nhỏ nên kết quả không đại diện thống kê (không dùng làm bằng chứng chính).
+- **hepatitis** (minh chứng chính): được SMOTE (ratio 3.8, lớp 32≥6 mẫu) → tăng cả 3 chỉ số (Acc 0.819→0.840, F1 0.728→0.760, Recall 0.759→0.806). Đáng tin vì lớp đủ mẫu.
+- **german:** F1 +0.035, Recall +0.067 nhờ SMOTE.
+- **lymph** (lớp 2 mẫu): KHÔNG còn được SMOTE (vì <6 mẫu, đúng cơ sở He & Garcia) → giữ ≈ baseline. Đây là điểm TRUNG THỰC — em không dùng SMOTE trên lớp quá nhỏ để tránh kết quả ảo.
 
 ---
 
 ## 6. Kết luận
 
 Cải tiến CMAR theo hướng **không dùng trọng số thuộc tính**, kết hợp 3 kỹ thuật từ các bài báo uy tín (MWMOTE + Added Value voting + Adaptive gating), đạt:
-- **Tăng F1 (+0.037) và Recall (+0.103)** trên dữ liệu mất cân bằng.
+- **Tăng F1 (+0.016) và Recall (+0.028)** trên dữ liệu mất cân bằng.
 - **Không giảm** chỉ số trên dữ liệu cân bằng (14/14 giữ nguyên).
+- **Ngưỡng SMOTE có cơ sở khoa học** (He & Garcia 2009): ratio≥2 VÀ lớp≥6 mẫu.
 - Kiểm định bằng **Chi-square** sẵn có trong CMAR.
 
 ---

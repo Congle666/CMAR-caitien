@@ -36,9 +36,15 @@ public class BenchmarkImbalanced {
         { "data_clean/breast-w.csv",  "breast-w",  "0.02" },   // 2:1 moderate
     };
 
-    /** Trigger mới: chỉ bật SMOTE khi minority CỰC ÍT (< 5). */
-    static final int    SMOTE_TRIGGER = 5;
-    static final double SMOTE_RATIO   = 1.0;
+    // Ngưỡng SMOTE có CƠ SỞ KHOA HỌC (He & Garcia 2009, IEEE TKDE 21(9)):
+    //  - SMOTE khi imbalance ratio ≥ SMOTE_RATIO_TH (dữ liệu đủ mất cân bằng).
+    //  - VÀ lớp nhỏ nhất ≥ SMOTE_MIN_SAMPLES (SMOTE cần ≥ k+1=6 mẫu để có đủ
+    //    k=5 láng giềng — dưới đó SMOTE thoái hóa thành nhân bản).
+    static final double SMOTE_RATIO_TH   = 2.0;   // ngưỡng imbalance ratio
+    static final int    SMOTE_MIN_SAMPLES = 6;    // k+1 với k=5
+    static final double SMOTE_RATIO       = 1.0;  // target balance khi oversampling
+    /** @deprecated ngưỡng cũ (min<5) không có cơ sở — giữ để tham chiếu. */
+    @Deprecated static final int SMOTE_TRIGGER = 5;
 
     public static void main(String[] args) throws Exception {
         int K_FOLD = 10;
@@ -190,9 +196,11 @@ public class BenchmarkImbalanced {
             EvalMetrics v = adaptive.get(name);
             EvalMetrics b = baseline.get(name);
             if (v == null || b == null) continue;
-            int minFreq = computeMinClassFreq(loadSafely(ds[0]));
-            if (minFreq >= SMOTE_TRIGGER) continue;
-            System.out.println("\n--- " + name.toUpperCase() + " (min=" + minFreq + ", Borderline ON) ---");
+            List<Transaction> dd = loadSafely(ds[0]);
+            int minFreq = computeMinClassFreq(dd);
+            // chỉ in chi tiết dataset được SMOTE (ratio≥2 và lớp≥6)
+            if (!(computeImbalanceRatio(dd) >= SMOTE_RATIO_TH && minFreq >= SMOTE_MIN_SAMPLES)) continue;
+            System.out.println("\n--- " + name.toUpperCase() + " (min=" + minFreq + ", SMOTE ON) ---");
             printPerClass(b, v);
         }
 
@@ -283,8 +291,9 @@ public class BenchmarkImbalanced {
                 double smoteRatio = 0.0;
                 CrossValidator.SmoteVariant variant = CrossValidator.SmoteVariant.VANILLA;
                 if (useAdaptiveSmote) {
-                    int minFreq = computeMinClassFreq(data);
-                    if (minFreq < SMOTE_TRIGGER) {
+                    // SMOTE có cơ sở (He & Garcia 2009): ratio ≥ 2 VÀ lớp ≥ 6 mẫu (k+1).
+                    if (computeImbalanceRatio(data) >= SMOTE_RATIO_TH
+                            && computeMinClassFreq(data) >= SMOTE_MIN_SAMPLES) {
                         smoteRatio = SMOTE_RATIO;
                         variant = CrossValidator.SmoteVariant.MWMOTE;  // Barua 2014 IEEE TKDE
                     }
@@ -351,9 +360,11 @@ public class BenchmarkImbalanced {
                 List<Transaction> data = DatasetLoader.load(file);
                 if (data.isEmpty()) { System.out.println("SKIP"); continue; }
 
+                // SMOTE có cơ sở (He & Garcia 2009): ratio ≥ 2 VÀ lớp ≥ 6 mẫu (k+1).
                 double smoteRatio = 0.0;
                 CrossValidator.SmoteVariant variant = CrossValidator.SmoteVariant.VANILLA;
-                if (computeMinClassFreq(data) < SMOTE_TRIGGER) {
+                if (computeImbalanceRatio(data) >= SMOTE_RATIO_TH
+                        && computeMinClassFreq(data) >= SMOTE_MIN_SAMPLES) {
                     smoteRatio = SMOTE_RATIO;
                     variant = CrossValidator.SmoteVariant.MWMOTE;
                 }

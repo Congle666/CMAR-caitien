@@ -26,15 +26,18 @@ CMAR gốc (Li, Han, Pei 2001) phân lớp tốt trên dữ liệu cân bằng n
 ### Trên 5 dataset mất cân bằng (trọng tâm)
 | Chỉ số | CMAR gốc | Cải tiến | Δ |
 |--------|---------:|---------:|---:|
-| **F1-score** | 0.707 | **0.747** | **+0.040** |
-| **Recall** | 0.668 | **0.776** | **+0.108** |
-| Accuracy | 0.792 | 0.791 | giữ (~) |
+| **F1-score** | 0.707 | **0.723** | **+0.016** |
+| **Recall** | 0.668 | **0.695** | **+0.028** |
+| Accuracy | 0.792 | 0.790 | giữ (~) |
 
 ### Trên 14 dataset cân bằng
-Giữ nguyên 100% (adaptive gating không can thiệp). **Win-Tie-Loss: 5 Thắng / 14 Hòa / 0 Thua.**
+Giữ nguyên 100% (adaptive gating không can thiệp).
 
-### Minh chứng chính: glass
-F1 0.575 → **0.623** (+0.048) — hoàn toàn nhờ Added Value voting, lớp đủ mẫu nên đáng tin.
+### Minh chứng chính: hepatitis
+Acc 0.819→**0.840**, F1 0.728→**0.760**, Recall 0.759→**0.806** — được SMOTE (ratio 3.8, lớp 32≥6 mẫu), lớp đủ mẫu nên đáng tin.
+
+### Ngưỡng SMOTE có cơ sở khoa học (He & Garcia 2009)
+SMOTE khi `imbalance ratio ≥ 2` **VÀ** `lớp nhỏ nhất ≥ 6 mẫu` (k+1, vì SMOTE cần đủ k=5 láng giềng). Lớp < 6 (lymph 2 mẫu) không SMOTE → tránh kết quả ảo.
 
 ---
 
